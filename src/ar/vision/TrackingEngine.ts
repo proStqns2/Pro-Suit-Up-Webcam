@@ -14,6 +14,24 @@ const CDN_WASM_URL = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.2.3
 const HOLISTIC_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task';
 
+const TFLITE_BENIGN_STDERR_RE =
+  /^(?:INFO:\s*(?:Created TensorFlow Lite|Initialized TensorFlow Lite)|WARNING:\s*All log messages before absl::InitializeLog\(\))/;
+
+let tfliteLogFilterInstalled = false;
+
+function installTfliteStderrFilter(): void {
+  if (tfliteLogFilterInstalled || typeof console === 'undefined') return;
+  tfliteLogFilterInstalled = true;
+  const origError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === 'string' && TFLITE_BENIGN_STDERR_RE.test(args[0].trimStart())) {
+      console.debug(...args);
+      return;
+    }
+    origError(...args);
+  };
+}
+
 export class TrackingEngine {
   public mode: 'none' | 'holistic' | 'modular' | 'demo' = 'none';
   public delegate = 'GPU';
@@ -51,6 +69,7 @@ export class TrackingEngine {
   private demoFace: NormalizedLandmark[] = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.25, z: 0, visibility: 1 }));
 
   async init(onProgress?: (pct: number, msg: string) => void): Promise<void> {
+    installTfliteStderrFilter();
     onProgress?.(25, 'Chargement du runtime WebAssembly MediaPipe...');
     let vision;
     try {
