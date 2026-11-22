@@ -1,0 +1,11 @@
+{
+  "name": "J.A.R.V.I.S. Mark 85 Tactical Suit-Up AR",
+  "description": "Application AR temps réel Mark 85 avec suivi corporel MediaPipe HolisticLandmarker, rendu 3D Three.js PBR, matérialisation Nanotech hexagonale, détection de gestes et synthèse audio.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
