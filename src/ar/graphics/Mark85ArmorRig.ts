@@ -549,24 +549,24 @@ export class Mark85ArmorRig {
     headEndoGroup.add(rearSpine);
     this.helmetGroup.add(this._registerAssembly(headEndoGroup, [0, 0.14, -0.25], [0, 0, 0], 0.22, 0.48));
 
-    // === 3. Coque arrière + mâchoires latérales + triangles de nuque cyan ===
+    // === 3. Coque arrière + mâchoires latérales + triangles de nuque cyan (MCU Mark 85) ===
     const skullAssembly = new THREE.Group();
     const skullShell = createDualLoftedShellGroup(
       (u, v, d) => {
-        const phi = THREE.MathUtils.lerp(Math.PI * 0.05, Math.PI * 0.74, 1.0 - u);
+        const phi = THREE.MathUtils.lerp(Math.PI * 0.05, Math.PI * 0.75, 1.0 - u);
         const theta = THREE.MathUtils.lerp(Math.PI * 0.34, Math.PI * 1.66, v);
-        const r = 0.485 - d;
+        const r = 0.478 - d;
         const x = Math.sin(phi) * Math.sin(theta) * r * 0.90;
-        const y = Math.cos(phi) * r * 1.15 + 0.06;
-        const z = Math.sin(phi) * Math.cos(theta) * r * 1.08 - 0.02;
+        const y = Math.cos(phi) * r * 1.14 + 0.06;
+        const z = Math.sin(phi) * Math.cos(theta) * r * 1.06 - 0.02;
         return [x, y, z];
       },
       this.mats.crimson,
       this.mats.crimsonInner,
       this.mats.crimsonDark,
-      20,
-      24,
-      0.036
+      22,
+      26,
+      0.034
     );
     skullAssembly.add(skullShell);
 
@@ -576,11 +576,11 @@ export class Mark85ArmorRig {
         const lon = THREE.MathUtils.lerp(0.16, Math.PI * 0.68, u);
         const halfAng = THREE.MathUtils.lerp(0.66, 0.84, Math.sin(u * Math.PI));
         const theta = lat * halfAng;
-        const ridge = (1.0 - smoothstep(0.0, 0.24, Math.abs(lat))) * 0.022;
-        const r = 0.480 + ridge - d;
-        const x = Math.sin(lon) * Math.sin(theta) * r * 0.92;
-        const y = Math.cos(lon) * r * 1.11 + 0.08;
-        const z = Math.sin(lon) * Math.cos(theta) * r * 1.08 - 0.02;
+        const ridge = (1.0 - smoothstep(0.0, 0.22, Math.abs(lat))) * 0.018;
+        const r = 0.476 + ridge - d;
+        const x = Math.sin(lon) * Math.sin(theta) * r * 0.91;
+        const y = Math.cos(lon) * r * 1.10 + 0.08;
+        const z = Math.sin(lon) * Math.cos(theta) * r * 1.06 - 0.02;
         return [x, y, z];
       },
       this.mats.crimson,
@@ -588,17 +588,35 @@ export class Mark85ArmorRig {
       this.mats.crimsonDark,
       16,
       16,
-      0.032
+      0.03
     );
     skullAssembly.add(crownCap);
 
+    // Arête occipitale titane sombre + évent dorsal
+    const crownVent = createDualLoftedShellGroup(
+      (u, v, d) => {
+        const lat = (v - 0.5) * 2.0;
+        const y = THREE.MathUtils.lerp(0.46, 0.54, u);
+        const x = lat * THREE.MathUtils.lerp(0.08, 0.05, u);
+        const z = THREE.MathUtils.lerp(0.10, -0.18, u) - lat * lat * 0.03 - d;
+        return [x, y, z];
+      },
+      this.mats.gunmetal,
+      this.mats.carbon,
+      this.mats.titanium,
+      6,
+      8,
+      0.022
+    );
+    skullAssembly.add(crownVent);
+
     const napeVentGeo = createExtrudedPlate(
       [
-        [0.0, 0.055],
-        [0.075, -0.02],
-        [-0.035, -0.045],
+        [0.0, 0.052],
+        [0.072, -0.018],
+        [-0.032, -0.042],
       ],
-      0.03,
+      0.028,
       0.003
     );
 
@@ -607,34 +625,57 @@ export class Mark85ArmorRig {
       const jawAssembly = new THREE.Group();
       const jawWrap = createDualLoftedShellGroup(
         (u, v, d) => {
-          const y = THREE.MathUtils.lerp(0.08, -0.51, u);
-          const taper = THREE.MathUtils.lerp(1.0, 0.72, u);
-          const ang = THREE.MathUtils.lerp(Math.PI * 0.56, Math.PI * 0.18, v);
-          const rX = (0.45 - d) * taper;
-          const rZ = (0.48 - d) * (0.95 + 0.05 * (1 - u));
+          const y = THREE.MathUtils.lerp(0.09, -0.49, u);
+          const taper = THREE.MathUtils.lerp(1.0, 0.70, u);
+          const ang = THREE.MathUtils.lerp(Math.PI * 0.55, Math.PI * 0.19, v);
+          const rX = (0.445 - d) * taper;
+          const rZ = (0.475 - d) * (0.95 + 0.05 * (1 - u));
           return [side * Math.sin(ang) * rX, y, Math.cos(ang) * rZ - 0.02];
         },
         this.mats.crimson,
         this.mats.gunmetal,
         this.mats.crimsonDark,
+        14,
         12,
-        10,
         0.032
       );
       jawAssembly.add(jawWrap);
+
+      // Liseré titane biseauté le long de la mâchoire (look Sketchfab Mark 85)
+      const jawTrim = createDualLoftedShellGroup(
+        (u, v, d) => {
+          const y = THREE.MathUtils.lerp(0.04, -0.43, u);
+          const taper = THREE.MathUtils.lerp(0.98, 0.73, u);
+          const ang = THREE.MathUtils.lerp(Math.PI * 0.48, Math.PI * 0.35, v);
+          const rX = (0.455 - d) * taper;
+          const rZ = 0.472 - d;
+          return [side * Math.sin(ang) * rX, y, Math.cos(ang) * rZ - 0.02];
+        },
+        this.mats.gunmetal,
+        this.mats.carbon,
+        this.mats.titanium,
+        8,
+        6,
+        0.018
+      );
+      jawAssembly.add(jawTrim);
+
       this.helmetGroup.add(
         this._registerAssembly(jawAssembly, [side * 0.36, -0.10, 0.16], [0, side * 0.45, 0], 0.72, 0.87)
       );
 
       const napeVent = new THREE.Mesh(napeVentGeo, this.mats.emissiveCyan);
       napeVent.scale.x = side;
-      napeVent.position.set(side * 0.21, -0.08, -0.455);
+      napeVent.position.set(side * 0.21, -0.08, -0.445);
       napeVent.rotation.y = Math.PI - side * 0.35;
       napeVent.rotation.x = 0.12;
       skullAssembly.add(napeVent);
 
-      const hinge = new THREE.Mesh(new THREE.BoxGeometry(0.038, 0.14, 0.09), this.mats.titanium);
-      hinge.position.set(side * 0.35, 0.24, 0.24);
+      // Servo-charrière temporale galbée (remplace le bloc carré)
+      const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.036, 0.12, 12), this.mats.gunmetal);
+      hinge.position.set(side * 0.36, 0.21, 0.20);
+      hinge.rotation.z = side * 0.22;
+      hinge.rotation.x = -0.35;
       skullAssembly.add(hinge);
       this.templeServos.push(hinge);
     }
@@ -642,10 +683,10 @@ export class Mark85ArmorRig {
     const chinGuard = createDualLoftedShellGroup(
       (u, v, d) => {
         const lat = (v - 0.5) * 2.0;
-        const y = THREE.MathUtils.lerp(-0.37, -0.54, u);
-        const wFactor = THREE.MathUtils.lerp(0.30, 0.175, u);
+        const y = THREE.MathUtils.lerp(-0.36, -0.52, u);
+        const wFactor = THREE.MathUtils.lerp(0.28, 0.165, u);
         const x = lat * wFactor;
-        const z = 0.445 - lat * lat * 0.15 - u * 0.055 - d;
+        const z = 0.442 - lat * lat * 0.14 - u * 0.055 - d;
         return [x, y, z];
       },
       this.mats.crimson,
@@ -653,23 +694,23 @@ export class Mark85ArmorRig {
       this.mats.crimsonDark,
       10,
       14,
-      0.034
+      0.032
     );
     const chinAssembly = new THREE.Group();
     chinAssembly.add(chinGuard);
     this.helmetGroup.add(this._registerAssembly(chinAssembly, [0, -0.35, 0.38], [0.45, 0, 0], 0.76, 0.90));
     this.helmetGroup.add(this._registerAssembly(skullAssembly, [0, 0.38, -0.32], [-0.35, 0, 0], 0.68, 0.85));
 
-    // === 4. Cage frontale ouverte Mark 86 ([H]) ===
+    // === 4. Cage frontale ouverte Mark 85 ([H]) compacte et plaquée sur le front ===
     this.openBrowCage = new THREE.Group();
     this.helmetGroup.add(this.openBrowCage);
 
     const browRib = createDualLoftedShellGroup(
       (u, v, d) => {
         const lat = (v - 0.5) * 2.0;
-        const x = lat * 0.36;
-        const y = THREE.MathUtils.lerp(0.27, 0.35, u) + (1.0 - Math.abs(lat)) * 0.02;
-        const z = 0.445 - lat * lat * 0.18 - u * 0.04 - d;
+        const x = lat * 0.34;
+        const y = THREE.MathUtils.lerp(0.25, 0.33, u) + (1.0 - Math.abs(lat)) * 0.018;
+        const z = 0.425 - lat * lat * 0.18 - u * 0.045 - d;
         return [x, y, z];
       },
       this.mats.gold,
@@ -677,16 +718,16 @@ export class Mark85ArmorRig {
       this.mats.titanium,
       6,
       16,
-      0.026
+      0.022
     );
     this.openBrowCage.add(browRib);
 
     const crownRib = createDualLoftedShellGroup(
       (u, v, d) => {
         const lat = (v - 0.5) * 2.0;
-        const x = lat * 0.32;
-        const y = THREE.MathUtils.lerp(0.41, 0.49, u);
-        const z = 0.36 - lat * lat * 0.15 - u * 0.08 - d;
+        const x = lat * 0.30;
+        const y = THREE.MathUtils.lerp(0.39, 0.47, u);
+        const z = 0.34 - lat * lat * 0.15 - u * 0.08 - d;
         return [x, y, z];
       },
       this.mats.gold,
@@ -694,27 +735,27 @@ export class Mark85ArmorRig {
       this.mats.titanium,
       6,
       14,
-      0.024
+      0.02
     );
     this.openBrowCage.add(crownRib);
 
-    for (const xPos of [-0.15, 0.0, 0.15]) {
+    for (const xPos of [-0.14, 0.0, 0.14]) {
       const strut = new THREE.Mesh(
-        new THREE.BoxGeometry(xPos === 0 ? 0.052 : 0.04, 0.19, 0.03),
+        new THREE.BoxGeometry(xPos === 0 ? 0.044 : 0.032, 0.17, 0.024),
         xPos === 0 ? this.mats.gold : this.mats.crimson
       );
-      strut.position.set(xPos, 0.36, 0.40 - Math.abs(xPos) * 0.35);
+      strut.position.set(xPos, 0.35, 0.38 - Math.abs(xPos) * 0.35);
       strut.rotation.x = -0.44;
-      strut.rotation.z = -xPos * 0.35;
+      strut.rotation.z = -xPos * 0.32;
       this.openBrowCage.add(strut);
     }
 
-    this.faceOccluder = new THREE.Mesh(new THREE.SphereGeometry(0.40, 20, 16), this.mats.depthOccluder);
-    this.faceOccluder.scale.set(0.84, 1.0, 0.78);
-    this.faceOccluder.position.set(0, -0.02, 0.14);
+    this.faceOccluder = new THREE.Mesh(new THREE.SphereGeometry(0.39, 20, 16), this.mats.depthOccluder);
+    this.faceOccluder.scale.set(0.83, 0.98, 0.76);
+    this.faceOccluder.position.set(0, -0.02, 0.13);
     this.helmetGroup.add(this.faceOccluder);
 
-    // === 5. Masque facial Champagne Gold (scelle en dernier Vidéo 3 & Vidéo 4!) ===
+    // === 5. Masque facial Champagne Gold sculpté (zéro bloc rectangulaire, facettes MCU) ===
     const faceplateAssembly = new THREE.Group();
     this.helmetGroup.add(
       this._registerAssembly(faceplateAssembly, [0, 0.48, 0.45], [-0.85, 0, 0], 0.83, 0.98)
@@ -732,53 +773,61 @@ export class Mark85ArmorRig {
       (u, v, d) => {
         const lat = (v - 0.5) * 2.0;
         const absLat = Math.abs(lat);
-        const foreheadTop = 0.31 + 0.14 * smoothstep(0.14, 0.62, absLat) - 0.04 * smoothstep(0.75, 1.0, absLat);
-        const y = THREE.MathUtils.lerp(-0.44, foreheadTop, u);
-        const halfW = 0.195 + 0.175 * smoothstep(0.06, 0.52, u) - 0.07 * smoothstep(0.70, 1.0, u);
+        const foreheadTop = 0.29 + 0.14 * smoothstep(0.14, 0.62, absLat) - 0.04 * smoothstep(0.76, 1.0, absLat);
+        const y = THREE.MathUtils.lerp(-0.42, foreheadTop, u);
+        const halfW = 0.182 + 0.175 * smoothstep(0.06, 0.54, u) - 0.07 * smoothstep(0.72, 1.0, u);
         const x = lat * halfW;
 
         let z =
-          0.48 -
-          absLat * absLat * (0.145 + 0.04 * u) -
+          0.468 -
+          absLat * absLat * (0.148 + 0.038 * u) -
           smoothstep(0.66, 1.0, u) * 0.11 -
-          smoothstep(0.28, 0.0, u) * 0.04;
+          smoothstep(0.24, 0.0, u) * 0.035;
 
+        // Cavités orbitales nettes pour accueillir les optiques cyan
         const eyeCenterU = 0.59 - (1.0 - absLat) * 0.055;
-        const eyeBandV = Math.exp(-Math.pow((u - eyeCenterU) / 0.052, 2));
-        const eyeSideU = smoothstep(0.14, 0.28, absLat) * (1.0 - smoothstep(0.65, 0.86, absLat));
-        z -= 0.055 * eyeBandV * eyeSideU;
+        const eyeBandV = Math.exp(-Math.pow((u - eyeCenterU) / 0.048, 2));
+        const eyeSideU = smoothstep(0.14, 0.27, absLat) * (1.0 - smoothstep(0.66, 0.86, absLat));
+        z -= 0.052 * eyeBandV * eyeSideU;
 
-        const browCenterU = eyeCenterU + 0.085;
-        const browRidgeV = Math.exp(-Math.pow((u - browCenterU) / 0.04, 2));
-        const browWide = smoothstep(0.05, 0.24, absLat) * (1.0 - smoothstep(0.68, 0.90, absLat));
+        // Arcade sourcilière agressive
+        const browCenterU = eyeCenterU + 0.084;
+        const browRidgeV = Math.exp(-Math.pow((u - browCenterU) / 0.038, 2));
+        const browWide = smoothstep(0.04, 0.24, absLat) * (1.0 - smoothstep(0.68, 0.90, absLat));
         z += 0.022 * browRidgeV * browWide;
 
+        // Arête nasale tendue + pli buccal gravé (sans barre flottante)
         const noseSpan =
-          (1.0 - smoothstep(0.0, 0.17, absLat)) * smoothstep(0.26, 0.46, u) * (1.0 - smoothstep(0.62, 0.78, u));
-        z += 0.030 * noseSpan * (1.0 - smoothstep(0.0, 0.14, absLat));
+          (1.0 - smoothstep(0.0, 0.15, absLat)) * smoothstep(0.26, 0.48, u) * (1.0 - smoothstep(0.62, 0.78, u));
+        z += 0.028 * noseSpan * (1.0 - smoothstep(0.0, 0.13, absLat));
 
+        const mouthCrease =
+          Math.exp(-Math.pow((u - 0.165) / 0.018, 2)) * (1.0 - smoothstep(0.22, 0.52, absLat));
+        z -= 0.018 * mouthCrease;
+
+        // Facettes latérales de pommettes
         const cheekPlane =
-          smoothstep(0.54, 0.92, absLat) * smoothstep(0.12, 0.48, u) * (1.0 - smoothstep(0.48, 0.64, u));
-        z -= 0.02 * cheekPlane;
+          smoothstep(0.54, 0.92, absLat) * smoothstep(0.12, 0.48, u) * (1.0 - smoothstep(0.48, 0.66, u));
+        z -= 0.022 * cheekPlane;
 
         return [x, y, z - d];
       },
       this.mats.gold,
       this.mats.gunmetal,
       this.mats.titanium,
-      26,
-      30,
-      0.034
+      28,
+      32,
+      0.03
     );
     this.faceplateGroup.add(maskShell);
 
     const foreheadCrest = createDualLoftedShellGroup(
       (u, v, d) => {
         const lat = (v - 0.5) * 2.0;
-        const y = THREE.MathUtils.lerp(0.315, 0.47, u) + Math.abs(lat) * 0.04;
-        const w = THREE.MathUtils.lerp(0.068, 0.155, smoothstep(0.0, 0.8, u));
+        const y = THREE.MathUtils.lerp(0.295, 0.46, u) + Math.abs(lat) * 0.04;
+        const w = THREE.MathUtils.lerp(0.062, 0.148, smoothstep(0.0, 0.8, u));
         const x = lat * w;
-        const z = 0.478 - lat * lat * 0.04 - smoothstep(0.2, 1.0, u) * 0.105 - d;
+        const z = 0.465 - lat * lat * 0.04 - smoothstep(0.2, 1.0, u) * 0.105 - d;
         return [x, y, z];
       },
       this.mats.crimson,
@@ -786,16 +835,35 @@ export class Mark85ArmorRig {
       this.mats.crimsonDark,
       10,
       14,
-      0.024
+      0.022
     );
     this.faceplateGroup.add(foreheadCrest);
+
+    // Mentonnière sculptée Champagne Gold + jointure de mâchoire
+    const chinGoldTip = createDualLoftedShellGroup(
+      (u, v, d) => {
+        const lat = (v - 0.5) * 2.0;
+        const y = THREE.MathUtils.lerp(-0.425, -0.34, u);
+        const w = THREE.MathUtils.lerp(0.105, 0.155, u);
+        const x = lat * w;
+        const z = 0.448 - lat * lat * 0.06 - d;
+        return [x, y, z];
+      },
+      this.mats.gold,
+      this.mats.gunmetal,
+      this.mats.titanium,
+      6,
+      10,
+      0.018
+    );
+    this.faceplateGroup.add(chinGoldTip);
 
     for (const side of [-1, 1]) {
       const cheekVents = createDualLoftedShellGroup(
         (u, v, d) => {
-          const y = THREE.MathUtils.lerp(-0.29, -0.02, u);
-          const x = side * THREE.MathUtils.lerp(0.22, 0.34, v) * THREE.MathUtils.lerp(0.80, 1.0, u);
-          const z = 0.405 - (v - 0.28) * 0.08 - d;
+          const y = THREE.MathUtils.lerp(-0.28, -0.02, u);
+          const x = side * THREE.MathUtils.lerp(0.21, 0.33, v) * THREE.MathUtils.lerp(0.80, 1.0, u);
+          const z = 0.398 - (v - 0.28) * 0.08 - d;
           return [x, y, z];
         },
         this.mats.gunmetal,
@@ -803,49 +871,44 @@ export class Mark85ArmorRig {
         this.mats.titanium,
         8,
         8,
-        0.02
+        0.018
       );
       this.faceplateGroup.add(cheekVents);
     }
 
-    const mouthSlit = new THREE.Mesh(new THREE.BoxGeometry(0.145, 0.014, 0.024), this.mats.gunmetal);
-    mouthSlit.position.set(0, -0.29, 0.468);
-    mouthSlit.rotation.x = 0.08;
-    this.faceplateGroup.add(mouthSlit);
-
     const eyeSocketGeo = createExtrudedPlate(
       [
-        [-0.086, 0.024],
-        [0.082, 0.012],
-        [0.072, -0.020],
-        [-0.074, -0.014],
+        [-0.084, 0.021],
+        [0.080, 0.010],
+        [0.068, -0.017],
+        [-0.072, -0.012],
       ],
-      0.022,
+      0.02,
       0.004
     );
     const eyeLensGeo = createExtrudedPlate(
       [
-        [-0.076, 0.017],
-        [0.072, 0.007],
-        [0.062, -0.014],
-        [-0.066, -0.009],
+        [-0.073, 0.014],
+        [0.069, 0.006],
+        [0.058, -0.012],
+        [-0.062, -0.008],
       ],
-      0.018,
+      0.016,
       0.002
     );
 
     for (const side of [-1, 1]) {
       const socket = new THREE.Mesh(eyeSocketGeo, this.mats.gunmetal);
       socket.scale.x = side;
-      socket.position.set(side * 0.135, 0.105, 0.448);
-      socket.rotation.z = side * 0.19;
+      socket.position.set(side * 0.128, 0.098, 0.436);
+      socket.rotation.z = side * 0.20;
       socket.rotation.y = side * 0.22;
       this.faceplateGroup.add(socket);
 
       const lens = new THREE.Mesh(eyeLensGeo, this.mats.emissiveCyan);
       lens.scale.x = side;
-      lens.position.set(side * 0.135, 0.104, 0.460);
-      lens.rotation.z = side * 0.19;
+      lens.position.set(side * 0.128, 0.097, 0.448);
+      lens.rotation.z = side * 0.20;
       lens.rotation.y = side * 0.22;
       this.faceplateGroup.add(lens);
     }
@@ -1022,6 +1085,42 @@ export class Mark85ArmorRig {
       );
       pecFlap.add(pecPlate);
 
+      // Cadre chanfreiné gunmetal autour du pectoral + ailettes intercostales latérales (Sketchfab Mark 85)
+      const pecLowerBezel = createDualLoftedShellGroup(
+        (u, v, d) => {
+          const y = THREE.MathUtils.lerp(-0.10, -0.04, u) - v * 0.05;
+          const x = side * THREE.MathUtils.lerp(0.08, 0.53, v);
+          const z = 0.362 - v * v * 0.22 - d;
+          return [x, y, z];
+        },
+        this.mats.gunmetal,
+        this.mats.carbon,
+        this.mats.titanium,
+        6,
+        12,
+        0.024
+      );
+      pecFlap.add(pecLowerBezel);
+
+      for (let rib = 0; rib < 3; rib++) {
+        const ribY = -0.13 - rib * 0.068;
+        const ribFin = createDualLoftedShellGroup(
+          (u, v, d) => {
+            const y = ribY + u * 0.045 - v * 0.03;
+            const x = side * THREE.MathUtils.lerp(0.32, 0.49 - rib * 0.025, v);
+            const z = 0.29 - v * 0.16 - d;
+            return [x, y, z];
+          },
+          rib === 1 ? this.mats.gunmetal : this.mats.crimsonDark,
+          this.mats.carbon,
+          this.mats.titanium,
+          6,
+          8,
+          0.022
+        );
+        pecAssembly.add(ribFin);
+      }
+
       const trapAssembly = new THREE.Group();
       const trapMuscle = createDualLoftedShellGroup(
         (u, v, d) => {
@@ -1059,19 +1158,30 @@ export class Mark85ArmorRig {
       );
       clavAssembly.add(clavSilverShell);
 
-      const collarGoldPin = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.16, 0.045), this.mats.gold);
-      collarGoldPin.position.set(side * 0.24, 0.48, 0.21);
-      collarGoldPin.rotation.z = side * -0.28;
-      collarGoldPin.rotation.x = 0.55;
+      const collarGoldPin = createDualLoftedShellGroup(
+        (u, v, d) => {
+          const lat = (v - 0.5) * 2.0;
+          const y = THREE.MathUtils.lerp(0.37, 0.53, u);
+          const x = side * THREE.MathUtils.lerp(0.17, 0.27, u) + lat * 0.032;
+          const z = 0.28 - u * 0.10 - lat * lat * 0.015 - d;
+          return [x, y, z];
+        },
+        this.mats.gold,
+        this.mats.gunmetal,
+        this.mats.titanium,
+        6,
+        6,
+        0.022
+      );
       clavAssembly.add(collarGoldPin);
 
-      const shoulderFrontGlow = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.032, 0.04), this.mats.emissiveCyan);
+      const shoulderFrontGlow = new THREE.Mesh(new THREE.BoxGeometry(0.105, 0.026, 0.036), this.mats.emissiveCyan);
       shoulderFrontGlow.position.set(side * 0.36, 0.37, 0.25);
       shoulderFrontGlow.rotation.z = side * -0.22;
       shoulderFrontGlow.rotation.y = side * 0.36;
       clavAssembly.add(shoulderFrontGlow);
 
-      const shoulderBackGlow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.028, 0.045), this.mats.emissiveCyan);
+      const shoulderBackGlow = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.026, 0.042), this.mats.emissiveCyan);
       shoulderBackGlow.position.set(side * 0.32, 0.43, -0.18);
       shoulderBackGlow.rotation.z = side * 0.18;
       shoulderBackGlow.rotation.y = side * -0.28;
@@ -1098,7 +1208,7 @@ export class Mark85ArmorRig {
       );
       subPecAssembly.add(subPecPlate);
 
-      const underPecCyanSlit = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.022, 0.04), this.mats.emissiveCyan);
+      const underPecCyanSlit = new THREE.Mesh(new THREE.BoxGeometry(0.135, 0.02, 0.038), this.mats.emissiveCyan);
       underPecCyanSlit.position.set(side * 0.39, -0.02, 0.275);
       underPecCyanSlit.rotation.z = side * -0.24;
       underPecCyanSlit.rotation.y = side * 0.56;
@@ -1397,6 +1507,32 @@ export class Mark85ArmorRig {
         0.068
       );
       pauldronOuter.add(deltoidTopHood);
+
+      // Plaque deltoïde cramoisie latérale biseautée + évent cyan d'épaule (look Sketchfab Mark 85)
+      const deltoidCrimsonCap = createDualLoftedShellGroup(
+        (u, v, d) => {
+          const phi = THREE.MathUtils.lerp(0.18, 0.56, u);
+          const theta = THREE.MathUtils.lerp(-Math.PI * 0.34, Math.PI * 0.34, v);
+          const r = 1.155 - d;
+          const x = sideSign * (0.12 + Math.sin(phi) * Math.cos(theta) * r * 0.90);
+          const y = Math.cos(phi) * r * 0.89 - 0.08;
+          const z = Math.sin(phi) * Math.sin(theta) * r * 0.94;
+          return [x, y, z];
+        },
+        this.mats.crimson,
+        this.mats.gunmetal,
+        this.mats.titanium,
+        10,
+        12,
+        0.055
+      );
+      pauldronOuter.add(deltoidCrimsonCap);
+
+      const shoulderSlit = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.07, 0.44), this.mats.emissiveCyan);
+      shoulderSlit.position.set(sideSign * 0.62, 0.44, 0.0);
+      shoulderSlit.rotation.z = sideSign * -0.45;
+      pauldronOuter.add(shoulderSlit);
+
       addMachinedBolt(
         pauldronOuter,
         new THREE.Vector3(sideSign * 1.05, -0.24, 0.0),
@@ -1668,6 +1804,29 @@ export class Mark85ArmorRig {
         0.08
       );
       dorsalCover.add(dorsalShell);
+
+      // Crête dorsale titane biseautée + fente lumineuse de gantelet (look Vidéo 2 & Sketchfab)
+      const dorsalSpineFin = createDualLoftedShellGroup(
+        (u, v, d) => {
+          const lat = (v - 0.5) * 2.0;
+          const y = -0.06 - u * 0.78;
+          const x = lat * THREE.MathUtils.lerp(0.24, 0.16, u);
+          const z = THREE.MathUtils.lerp(-1.08, -0.84, u) + lat * lat * 0.08 + d;
+          return [x, y, z];
+        },
+        this.mats.gunmetal,
+        this.mats.carbon,
+        this.mats.titanium,
+        8,
+        8,
+        0.045
+      );
+      dorsalCover.add(dorsalSpineFin);
+
+      const gauntletCyanSlit = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.36, 0.055), this.mats.emissiveCyan);
+      gauntletCyanSlit.position.set(0, -0.54, -0.96);
+      gauntletCyanSlit.rotation.x = 0.28;
+      dorsalCover.add(gauntletCyanSlit);
 
       const dorsalLatch = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.14, 14), this.mats.titanium);
       dorsalLatch.rotation.x = Math.PI * 0.5;
@@ -2026,7 +2185,8 @@ export class Mark85ArmorRig {
     pEnd: THREE.Vector3,
     forwardHint: THREE.Vector3,
     scaleX: number,
-    scaleZ: number
+    scaleZ: number,
+    axialTwist = 0
   ): void {
     this._v1.subVectors(pEnd, pStart);
     const len = this._v1.length();
@@ -2049,6 +2209,9 @@ export class Mark85ArmorRig {
 
     this._mat4.makeBasis(this._xAxis, this._yAxis, this._zAxis);
     group.quaternion.setFromRotationMatrix(this._mat4);
+    if (Math.abs(axialTwist) > 1e-4) {
+      group.rotateY(axialTwist);
+    }
     group.scale.set(scaleX, len, scaleZ);
   }
 
@@ -2345,7 +2508,9 @@ export class Mark85ArmorRig {
       Math.max(vis[15], 0.4),
       gripL,
       timeSec,
-      suitProgress
+      suitProgress,
+      calib.kinematics.armTwistL,
+      calib.kinematics.forearmTwistL
     );
     this._updateArm(
       this.rightArm,
@@ -2362,7 +2527,9 @@ export class Mark85ArmorRig {
       Math.max(vis[16], 0.4),
       gripR,
       timeSec,
-      suitProgress
+      suitProgress,
+      calib.kinematics.armTwistR,
+      calib.kinematics.forearmTwistR
     );
 
     // 6. Gantelets & 5 doigts articulés
@@ -2453,7 +2620,9 @@ export class Mark85ArmorRig {
     vW: number,
     gripVal: number,
     timeSec: number,
-    suitProgress: number
+    suitProgress: number,
+    upperTwist = 0,
+    foreTwist = 0
   ): void {
     const showShoulder = vS > 0.05;
     const showUpper = vS > 0.05 && vE > 0.05;
@@ -2468,7 +2637,7 @@ export class Mark85ArmorRig {
     }
 
     if (showUpper) {
-      this._alignSegmentDownY(arm.upper, pShoulder, pElbow, forwardHint, rUpper, rUpper);
+      this._alignSegmentDownY(arm.upper, pShoulder, pElbow, forwardHint, rUpper, rUpper, upperTwist * 0.45);
       arm.elbow.visible = true;
       arm.elbow.position.copy(pElbow);
       arm.elbow.quaternion.copy(arm.upper.quaternion);
@@ -2479,7 +2648,7 @@ export class Mark85ArmorRig {
     }
 
     if (showFore) {
-      this._alignSegmentDownY(arm.forearm, pElbow, pWrist, forwardHint, rFore, rFore);
+      this._alignSegmentDownY(arm.forearm, pElbow, pWrist, forwardHint, rFore, rFore, foreTwist * 0.55);
 
       this._upperDir.subVectors(pShoulder, pElbow).normalize();
       this._foreDir.subVectors(pWrist, pElbow).normalize();

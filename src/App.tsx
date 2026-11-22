@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { JarvisARController, type HudSnapshot } from './ar/JarvisARController';
+import { DEFAULT_SUIT_PRESETS } from './ar/types/SuitPreset';
 
 const INITIAL_HUD: HudSnapshot = {
   bootState: 'loading',
   bootProgress: 8,
   bootTitle: 'STARK INDUSTRIES — MK-85',
-  bootMessage: 'Activation des capteurs optiques et shaders Nanotech...',
+  bootMessage: 'Activation des capteurs optiques et post-traitement HDR...',
   systemState: 'INITIALISATION OPTIQUE...',
   webcamStatus: 'ATTENTE',
   holisticInfo: 'CHARGEMENT',
@@ -26,6 +28,11 @@ const INITIAL_HUD: HudSnapshot = {
   audioEnabled: true,
   isDemoMode: false,
   fitScale: 1.0,
+  presets: DEFAULT_SUIT_PRESETS,
+  selectedPresetId: 'MK85_ENDGAME',
+  bloomEnabled: true,
+  backendOnline: false,
+  telemetrySummary: null,
   logs: [],
 };
 
@@ -62,6 +69,7 @@ export default function App() {
   const arcClamped = Math.round(Math.min(100, Math.max(0, hud.arcEnergy)));
   const syncOffset = RING_CIRCUMFERENCE * (1 - syncClamped / 100);
   const arcOffset = RING_CIRCUMFERENCE * (1 - arcClamped / 100);
+  const activePreset = hud.presets.find((p) => p.id === hud.selectedPresetId) ?? hud.presets[0];
 
   return (
     <div
@@ -114,7 +122,12 @@ export default function App() {
       <div className="hud-reticle-corner br z-[4]" />
 
       {/* Top-Left Panel: Biometric Sensors & System Telemetry */}
-      <aside className="hud-panel absolute top-3 left-3 z-[5] w-[232px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]">
+      <motion.aside
+        initial={{ opacity: 0, x: -16 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.35 }}
+        className="hud-panel absolute top-3 left-3 z-[5] w-[238px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]"
+      >
         <div className="font-display text-[12px] font-bold tracking-[0.09em] text-[var(--hud-cyan)] flex items-center justify-between gap-2">
           <span>J.A.R.V.I.S. · MK-85</span>
           <span className="font-mono-tech text-[10px] text-[var(--hud-gold)]">
@@ -147,16 +160,23 @@ export default function App() {
             </span>
           </div>
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">LUMIÈRE</span>
-            <span className="text-[var(--hud-cyan)] font-semibold">{Math.round(hud.luma * 100)}%</span>
+            <span className="text-[#d2f6ff]/70">RENDU HDR</span>
+            <span className="text-[var(--hud-cyan)] font-semibold">
+              {hud.bloomEnabled ? 'BLOOM ACES' : 'PBR STD'}
+            </span>
           </div>
         </div>
-      </aside>
+      </motion.aside>
 
-      {/* Top-Right Panel: Sync & ARC Reactor Gauges */}
-      <aside className="hud-panel absolute top-3 right-3 z-[5] w-[206px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]">
+      {/* Top-Right Panel: Sync, ARC Reactor & Live Finish Presets */}
+      <motion.aside
+        initial={{ opacity: 0, x: 16 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.35 }}
+        className="hud-panel absolute top-3 right-3 z-[5] w-[224px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]"
+      >
         <div className="flex justify-around gap-2">
-          <div className="relative w-[68px] h-[68px]">
+          <div className="relative w-[66px] h-[66px]">
             <svg viewBox="0 0 100 100" className="arc-svg">
               <circle cx="50" cy="50" r="40" className="arc-bg" />
               <circle
@@ -177,7 +197,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="relative w-[68px] h-[68px]">
+          <div className="relative w-[66px] h-[66px]">
             <svg viewBox="0 0 100 100" className="arc-svg">
               <circle cx="50" cy="50" r="40" className="arc-bg" />
               <circle
@@ -199,15 +219,39 @@ export default function App() {
           </div>
         </div>
 
-        <div className="mt-2 px-2 py-0.5 border border-[var(--hud-border)] bg-[rgba(59,240,255,0.08)] flex items-center justify-between text-[10px] font-mono-tech tracking-[0.06em] text-[var(--hud-cyan)]">
-          <span>{hud.isStealth ? 'MODE FURTIF' : 'MODE COMBAT'}</span>
-          <span className="text-[var(--hud-gold)]">{hud.isStealth ? 'STEALTH' : 'MK-85'}</span>
+        <div className="mt-2 px-2 py-0.5 border border-[var(--hud-border)] bg-[rgba(59,240,255,0.08)] flex items-center justify-between text-[10px] font-mono-tech tracking-[0.05em] text-[var(--hud-cyan)]">
+          <span className="truncate">{activePreset?.name ?? 'Mark 85'}</span>
+          <span className="text-[var(--hud-gold)] shrink-0 ml-1">
+            {hud.backendOnline ? 'CORE OK' : 'LOCAL'}
+          </span>
         </div>
-      </aside>
+
+        {/* 4 Profils Alliage Serveur ([1]..[4]) */}
+        <div className="mt-1.5 grid grid-cols-4 gap-1">
+          {hud.presets.map((preset, index) => {
+            const active = preset.id === hud.selectedPresetId;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                title={`${preset.name} (touche ${index + 1})`}
+                onClick={() => controllerRef.current?.selectPreset(preset.id)}
+                className={`py-0.5 px-1 border font-mono-tech text-[9px] tracking-tight cursor-pointer transition-colors ${
+                  active
+                    ? 'bg-[rgba(59,240,255,0.24)] border-[var(--hud-gold)] text-white font-semibold'
+                    : 'bg-[rgba(10,26,44,0.82)] border-[var(--hud-border)] text-[#cdefff]/80 hover:border-[var(--hud-cyan)] hover:text-white'
+                }`}
+              >
+                {preset.shortLabel}
+              </button>
+            );
+          })}
+        </div>
+      </motion.aside>
 
       {/* Bottom-Left Panel: Gesture State & Telemetry Log */}
       {!dockCollapsed && (
-        <aside className="hud-panel absolute bottom-14 left-3 z-[5] w-[248px] px-3 py-2 max-xl:hidden">
+        <aside className="hud-panel absolute bottom-14 left-3 z-[5] w-[252px] px-3 py-2 max-xl:hidden">
           <div className="font-display text-[10px] text-[var(--hud-cyan)] mb-1 tracking-[0.08em]">
             TÉLÉMÉTRIE &amp; GESTES
           </div>
@@ -344,45 +388,58 @@ export default function App() {
       </div>
 
       {/* Boot / Webcam Error Overlay */}
-      {hud.bootState !== 'ready' && (
-        <div className="absolute inset-0 z-20 bg-[#030912]/90 flex items-center justify-center p-4">
-          <div className="hud-panel w-full max-w-[460px] p-6 text-center">
-            {hud.bootState === 'loading' && <div className="arc-spinner mx-auto mb-4" />}
-            <h1 className="font-display text-[17px] font-bold text-[var(--hud-cyan)] tracking-[0.1em] mb-2.5">
-              {hud.bootTitle}
-            </h1>
-            <p className="text-[13.5px] text-[#cbeeff] leading-relaxed mb-4">{hud.bootMessage}</p>
-            <div className="w-full h-1.5 bg-white/10 overflow-hidden mb-5">
-              <div
-                className="h-full transition-all duration-200"
-                style={{
-                  width: `${Math.min(100, Math.max(0, hud.bootProgress))}%`,
-                  background: 'linear-gradient(90deg, var(--hud-cyan), var(--hud-gold))',
-                }}
-              />
-            </div>
-
-            {hud.bootState === 'error' && (
-              <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void controllerRef.current?.start()}
-                  className="px-4 py-2.5 bg-[rgba(255,59,78,0.22)] border border-[var(--hud-red)] text-white font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(255,59,78,0.34)] transition-colors whitespace-nowrap"
-                >
-                  Réactiver la webcam
-                </button>
-                <button
-                  type="button"
-                  onClick={() => controllerRef.current?.startDemoMode()}
-                  className="px-4 py-2.5 bg-[rgba(59,240,255,0.18)] border border-[var(--hud-cyan)] text-[#dff9ff] font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(59,240,255,0.30)] transition-colors whitespace-nowrap"
-                >
-                  Lancer Démo 3D (Sans Webcam)
-                </button>
+      <AnimatePresence>
+        {hud.bootState !== 'ready' && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="absolute inset-0 z-20 bg-[#030912]/90 flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.96, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.97, opacity: 0 }}
+              className="hud-panel w-full max-w-[460px] p-6 text-center"
+            >
+              {hud.bootState === 'loading' && <div className="arc-spinner mx-auto mb-4" />}
+              <h1 className="font-display text-[17px] font-bold text-[var(--hud-cyan)] tracking-[0.1em] mb-2.5">
+                {hud.bootTitle}
+              </h1>
+              <p className="text-[13.5px] text-[#cbeeff] leading-relaxed mb-4">{hud.bootMessage}</p>
+              <div className="w-full h-1.5 bg-white/10 overflow-hidden mb-5">
+                <div
+                  className="h-full transition-all duration-200"
+                  style={{
+                    width: `${Math.min(100, Math.max(0, hud.bootProgress))}%`,
+                    background: 'linear-gradient(90deg, var(--hud-cyan), var(--hud-gold))',
+                  }}
+                />
               </div>
-            )}
-          </div>
-        </div>
-      )}
+
+              {hud.bootState === 'error' && (
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void controllerRef.current?.start()}
+                    className="px-4 py-2.5 bg-[rgba(255,59,78,0.22)] border border-[var(--hud-red)] text-white font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(255,59,78,0.34)] transition-colors whitespace-nowrap"
+                  >
+                    Réactiver la webcam
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => controllerRef.current?.startDemoMode()}
+                    className="px-4 py-2.5 bg-[rgba(59,240,255,0.18)] border border-[var(--hud-cyan)] text-[#dff9ff] font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(59,240,255,0.30)] transition-colors whitespace-nowrap"
+                  >
+                    Lancer Démo 3D (Sans Webcam)
+                  </button>
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

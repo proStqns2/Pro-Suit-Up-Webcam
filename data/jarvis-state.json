@@ -1,0 +1,19 @@
+{
+  "calibration": {
+    "fitScale": 1,
+    "selectedPresetId": "MK85_ENDGAME",
+    "bloomStrength": 0.62,
+    "metricShoulderWidth": 0.4,
+    "torsoAspectRatio": 1.38,
+    "updatedAt": "2026-11-22T15:18:26.310Z"
+  },
+  "telemetry": {
+    "totalSessions": 0,
+    "totalSuitUps": 0,
+    "totalRepulsorShots": 0,
+    "avgFps": 60,
+    "avgSync": 0,
+    "lastMode": "NONE",
+    "lastUpdatedAt": "2026-11-22T15:18:26.078Z"
+  }
+}

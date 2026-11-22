@@ -6,7 +6,15 @@ import { createMark85Materials, type Mark85MaterialLibrary } from './graphics/Ma
 import { Mark85ArmorRig } from './graphics/Mark85ArmorRig';
 import { NanotechVFX } from './graphics/NanotechVFX';
 import { EnvLighting } from './graphics/EnvLighting';
+import { CinemaPostProcess } from './graphics/CinemaPostProcess';
 import { AudioSynth } from './audio/AudioSynth';
+import { BackendClient } from './services/BackendClient';
+import {
+  DEFAULT_SUIT_PRESETS,
+  type SuitPreset,
+  type SuitPresetId,
+  type TelemetrySummary,
+} from './types/SuitPreset';
 
 export interface HudSnapshot {
   bootState: 'loading' | 'ready' | 'error';
@@ -32,6 +40,11 @@ export interface HudSnapshot {
   audioEnabled: boolean;
   isDemoMode: boolean;
   fitScale: number;
+  presets: SuitPreset[];
+  selectedPresetId: SuitPresetId;
+  bloomEnabled: boolean;
+  backendOnline: boolean;
+  telemetrySummary: TelemetrySummary | null;
   logs: string[];
 }
 
@@ -83,6 +96,7 @@ export class JarvisARController {
   private renderer: THREE.WebGLRenderer;
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
+  private postProcess: CinemaPostProcess | null = null;
 
   private calibration: CalibrationEngine;
   private tracking: TrackingEngine;
@@ -92,9 +106,20 @@ export class JarvisARController {
   private vfx: NanotechVFX;
   private envLighting: EnvLighting;
   private audio: AudioSynth;
+  private backend = new BackendClient();
 
   private stream: MediaStream | null = null;
   private recognition: SpeechRecognitionLike | null = null;
+
+  private presets: SuitPreset[] = DEFAULT_SUIT_PRESETS;
+  private selectedPresetId: SuitPresetId = 'MK85_ENDGAME';
+  private lastCombatPresetId: SuitPresetId = 'MK85_ENDGAME';
+  private backendOnline = false;
+  private telemetrySummary: TelemetrySummary | null = null;
+  private pendingSuitUpTelemetry = 0;
+  private pendingShotsTelemetry = 0;
+  private telemetrySyncTimer = 0;
+  private calibrationSavedOnLock = false;
 
   private suitProgress = 0.0;
   private suitAnimating = false;
@@ -113,7 +138,7 @@ export class JarvisARController {
   private bootState: 'loading' | 'ready' | 'error' = 'loading';
   private bootProgress = 5;
   private bootTitle = 'STARK INDUSTRIES — MK-85';
-  private bootMessage = 'Activation des capteurs optiques et shaders Nanotech...';
+  private bootMessage = 'Activation des capteurs optiques et post-traitement HDR...';
   private systemState = 'INITIALISATION OPTIQUE...';
   private webcamStatus = 'ATTENTE';
   private holisticInfo = 'CHARGEMENT';
@@ -178,6 +203,7 @@ export class JarvisARController {
     this.debugSkeleton = new DebugSkeleton(this.debugCanvas);
 
     if (!this.isSoftwareGl) {
+      this.postProcess = new CinemaPostProcess(this.renderer, this.scene, this.camera);
       this.renderer.compile(this.scene, this.camera);
     }
 
@@ -219,6 +245,28 @@ export class JarvisARController {
     window.addEventListener('pointercancel', this._onPointerUpBound);
     this.webglCanvas.addEventListener('webglcontextlost', this._onContextLostBound);
     this.webglCanvas.addEventListener('webglcontextrestored', this._onContextRestoredBound);
+
+    void this._bootstrapBackend();
+  }
+
+  private async _bootstrapBackend(): Promise<void> {
+    const [health, presets, savedCal] = await Promise.all([
+      this.backend.getHealth(),
+      this.backend.getSuitPresets(),
+      this.backend.getCalibration(),
+    ]);
+    if (this.disposed) return;
+
+    this.backendOnline = Boolean(health && health.status === 'operational');
+    this.presets = presets;
+    this.fitScale = savedCal.fitScale;
+    this.calibration.metricShoulderWidth = savedCal.metricShoulderWidth;
+    this.calibration.torsoAspectRatio = savedCal.torsoAspectRatio;
+    this.selectPreset(savedCal.selectedPresetId, false);
+    if (this.backendOnline) {
+      this.addLog('Noyau serveur J.A.R.V.I.S. connecté (profil calibré restauré).');
+    }
+    this.emitSnapshot();
   }
 
   private _onResize(): void {
@@ -227,6 +275,7 @@ export class JarvisARController {
     this.camera.aspect = w / Math.max(h, 1);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
+    this.postProcess?.setSize(w, h);
     this.debugCanvas.width = w;
     this.debugCanvas.height = h;
   }
@@ -261,8 +310,38 @@ export class JarvisARController {
       audioEnabled: this.audio.enabled,
       isDemoMode: this.isDemoMode,
       fitScale: this.fitScale,
+      presets: this.presets,
+      selectedPresetId: this.selectedPresetId,
+      bloomEnabled: this.postProcess !== null,
+      backendOnline: this.backendOnline,
+      telemetrySummary: this.telemetrySummary,
       logs: this.logs,
     });
+  }
+
+  selectPreset(presetId: SuitPresetId, persist = true): void {
+    const preset = this.presets.find((p) => p.id === presetId) ?? this.presets[0];
+    if (!preset) return;
+
+    this.selectedPresetId = preset.id;
+    if (preset.id !== 'MK85_STEALTH_OPS') {
+      this.lastCombatPresetId = preset.id;
+    }
+
+    this.isStealth = preset.id === 'MK85_STEALTH_OPS';
+    document.body.classList.toggle('stealth-theme', this.isStealth);
+
+    this.materials.applyPreset(preset);
+    this.postProcess?.setBloomStrength(preset.bloomStrength);
+
+    if (persist) {
+      this.addLog(`Profil armure activé : ${preset.name}.`);
+      void this.backend.saveCalibration({
+        selectedPresetId: preset.id,
+        bloomStrength: preset.bloomStrength,
+      });
+    }
+    this.emitSnapshot();
   }
 
   async start(): Promise<void> {
@@ -271,6 +350,7 @@ export class JarvisARController {
     this.demoYawTarget = 0;
     this.tracking.demoYaw = 0;
     this.isDraggingYaw = false;
+    this.calibrationSavedOnLock = false;
     this.bootState = 'loading';
     this.bootTitle = 'STARK INDUSTRIES — MK-85';
     this.bootProgress = 10;
@@ -390,6 +470,7 @@ export class JarvisARController {
   triggerSuitUp(): void {
     this.suitProgress = 0.0;
     this.suitAnimating = true;
+    this.pendingSuitUpTelemetry += 1;
     this.audio.playSuitUp();
     this.addLog('Séquence Nanotech Suit-Up lancée depuis le réacteur ARC.');
     this.emitSnapshot();
@@ -414,6 +495,7 @@ export class JarvisARController {
   fireRepulsor(side: 'left' | 'right' = 'right'): void {
     this.vfx.triggerBlast(side);
     this.audio.playRepulsorBlast();
+    this.pendingShotsTelemetry += 1;
     this.arcEnergy = Math.max(12, this.arcEnergy - 4.5);
     this.addLog(`Tir répulseur [${side === 'left' ? 'GAUCHE' : 'DROIT'}] déclenché.`);
     this.emitSnapshot();
@@ -426,14 +508,13 @@ export class JarvisARController {
   }
 
   toggleStealthMode(forceState: boolean | null = null): void {
-    this.isStealth = forceState !== null ? forceState : !this.isStealth;
-    document.body.classList.toggle('stealth-theme', this.isStealth);
-    this.addLog(this.isStealth ? 'Revêtement Furtif activé.' : 'Armure Mark 85 mode Combat.');
-    this.emitSnapshot();
+    const nextStealth = forceState !== null ? forceState : !this.isStealth;
+    this.selectPreset(nextStealth ? 'MK85_STEALTH_OPS' : this.lastCombatPresetId);
   }
 
   resetCalibration(): void {
     this.calibration.resetCalibration();
+    this.calibrationSavedOnLock = false;
     this.addLog('Recalibrage morphologique lancé...');
     this.emitSnapshot();
   }
@@ -443,6 +524,7 @@ export class JarvisARController {
     if (Math.abs(next - this.fitScale) < 1e-4) return;
     this.fitScale = next;
     this.addLog(`Enveloppe armure ajustée à ${Math.round(this.fitScale * 100)}%.`);
+    void this.backend.saveCalibration({ fitScale: this.fitScale });
     this.emitSnapshot();
   }
 
@@ -528,6 +610,10 @@ export class JarvisARController {
     else if (key === 'm') this.toggleStealthMode();
     else if (key === 'v') this.toggleVoiceControl();
     else if (key === 'c') this.resetCalibration();
+    else if (key === '1') this.selectPreset('MK85_ENDGAME');
+    else if (key === '2') this.selectPreset('MK85_LAB_PROTO');
+    else if (key === '3') this.selectPreset('MK85_STEALTH_OPS');
+    else if (key === '4') this.selectPreset('MK85_BATTLE_DAMAGED');
     else if (key === '[' || key === '-') this.adjustFitScale(-0.05);
     else if (key === ']' || key === '+' || key === '=') this.adjustFitScale(0.05);
   }
@@ -641,6 +727,15 @@ export class JarvisARController {
       this.tracking.maskWidth,
       this.tracking.maskHeight
     );
+
+    if (!this.isDemoMode && this.calibration.calibrated && !this.calibrationSavedOnLock) {
+      this.calibrationSavedOnLock = true;
+      void this.backend.saveCalibration({
+        metricShoulderWidth: Number(this.calibration.metricShoulderWidth.toFixed(3)),
+        torsoAspectRatio: Number(this.calibration.torsoAspectRatio.toFixed(3)),
+      });
+    }
+
     this.armorRig.update(this.calibration, dt, this.fitScale, timeSec, this.suitProgress);
     this._evaluateGestures(dt, nowMs);
 
@@ -651,12 +746,18 @@ export class JarvisARController {
     this.stealthMix = THREE.MathUtils.damp(this.stealthMix, this.isStealth ? 1.0 : 0.0, 6.0, dt);
     this.arcEnergy = Math.min(100, this.arcEnergy + dt * 2.2);
 
+    const activePreset = this.presets.find((p) => p.id === this.selectedPresetId) ?? this.presets[0];
     const u = this.materials.sharedUniforms;
     u.uSuitProgress.value = this.suitProgress;
     u.uTime.value = timeSec;
     u.uStealthMix.value = this.stealthMix;
-    u.uNanoColor.value.setHex(this.isStealth ? 0x2cf59c : 0x38f2ff);
-    this.materials.emissiveCyan.emissive.setHex(this.isStealth ? 0x1ee88c : 0x28e4ff);
+    if (!this.isStealth && activePreset) {
+      u.uNanoColor.value.set(activePreset.emissiveHex);
+      this.materials.emissiveCyan.emissive.set(activePreset.emissiveHex);
+    } else if (this.isStealth) {
+      u.uNanoColor.value.setHex(0x2cf59c);
+      this.materials.emissiveCyan.emissive.setHex(0x1ee88c);
+    }
 
     this.envLighting.update(
       this.videoEl,
@@ -670,7 +771,34 @@ export class JarvisARController {
 
     this.debugSkeleton.draw(trackRes, this.calibration, videoW, videoH);
 
-    this.renderer.render(this.scene, this.camera);
+    if (this.postProcess) {
+      this.postProcess.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+
+    this.telemetrySyncTimer += dt;
+    if (this.telemetrySyncTimer > 12.0 || this.pendingShotsTelemetry > 0 || this.pendingSuitUpTelemetry > 0) {
+      if (this.telemetrySyncTimer > 6.0) {
+        this.telemetrySyncTimer = 0;
+        const suitDelta = this.pendingSuitUpTelemetry;
+        const shotDelta = this.pendingShotsTelemetry;
+        this.pendingSuitUpTelemetry = 0;
+        this.pendingShotsTelemetry = 0;
+        void this.backend
+          .sendTelemetry({
+            mode: this.isDemoMode ? 'DEMO_3D' : this.tracking.mode.toUpperCase(),
+            fps: this.fpsSmooth,
+            syncPercent: this.calibration.syncPercent,
+            arcEnergy: this.arcEnergy,
+            suitUpCountDelta: suitDelta,
+            repulsorShotsDelta: shotDelta,
+          })
+          .then((summary) => {
+            if (!this.disposed && summary) this.telemetrySummary = summary;
+          });
+      }
+    }
 
     this.hudTimer += dt;
     if (this.hudTimer > 0.066) {
@@ -704,6 +832,7 @@ export class JarvisARController {
     this.materials.dispose();
     this.vfx.dispose();
     this.envLighting.dispose();
+    this.postProcess?.dispose();
     this.audio.dispose();
     this.renderer.dispose();
     document.body.classList.remove('stealth-theme');

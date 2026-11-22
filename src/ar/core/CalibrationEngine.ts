@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Landmark, NormalizedLandmark } from '@mediapipe/tasks-vision';
+import { Face as KalidoFace, Pose as KalidoPose } from 'kalidokit';
 import { LandmarkFilterBank, OneEuroFilter } from './OneEuroFilter';
 
 export interface TrackingFrameResult {
@@ -40,6 +41,18 @@ export class CalibrationEngine {
   public hasFace = false;
   public syncPercent = 0;
 
+  // Angles biomécaniques Kalidokit lissés (torsion axiale bras/avant-bras + rotation tête)
+  public readonly kinematics = {
+    armTwistL: 0,
+    armTwistR: 0,
+    forearmTwistL: 0,
+    forearmTwistR: 0,
+    headPitch: 0,
+    headYaw: 0,
+    headRoll: 0,
+  };
+  private _kalidoTick = 0;
+
   private readonly _tmpA = new THREE.Vector3();
   private readonly _tmpB = new THREE.Vector3();
   private readonly _rawVec = new THREE.Vector3();
@@ -69,6 +82,13 @@ export class CalibrationEngine {
     this.faceAnchorBank.resetAll();
     this.depthFilter.reset();
     this.torsoWidthRatioFilter.reset();
+    this.kinematics.armTwistL = 0;
+    this.kinematics.armTwistR = 0;
+    this.kinematics.forearmTwistL = 0;
+    this.kinematics.forearmTwistR = 0;
+    this.kinematics.headPitch = 0;
+    this.kinematics.headYaw = 0;
+    this.kinematics.headRoll = 0;
   }
 
   videoToScreenNorm(
@@ -337,6 +357,72 @@ export class CalibrationEngine {
       }
     } else {
       this.hasFace = false;
+    }
+
+    // 6. Solveur cinématique Kalidokit (torsion axiale avant-bras/biceps & stabilisation crânienne)
+    this._kalidoTick++;
+    if ((this._kalidoTick & 1) === 0 && poseWorld && poseWorld.length >= 33) {
+      try {
+        const solvedPose = KalidoPose.solve(poseWorld, poseNorm, {
+          runtime: 'mediapipe',
+          imageSize: { width: videoW, height: videoH },
+          enableLegs: false,
+        });
+        if (solvedPose) {
+          const mirrorSign = this.isMirrored ? -1 : 1;
+          this.kinematics.armTwistL = THREE.MathUtils.lerp(
+            this.kinematics.armTwistL,
+            THREE.MathUtils.clamp((solvedPose.LeftUpperArm.y || 0) * mirrorSign, -0.55, 0.55),
+            0.25
+          );
+          this.kinematics.armTwistR = THREE.MathUtils.lerp(
+            this.kinematics.armTwistR,
+            THREE.MathUtils.clamp((solvedPose.RightUpperArm.y || 0) * mirrorSign, -0.55, 0.55),
+            0.25
+          );
+          this.kinematics.forearmTwistL = THREE.MathUtils.lerp(
+            this.kinematics.forearmTwistL,
+            THREE.MathUtils.clamp((solvedPose.LeftLowerArm.y || 0) * mirrorSign, -0.65, 0.65),
+            0.25
+          );
+          this.kinematics.forearmTwistR = THREE.MathUtils.lerp(
+            this.kinematics.forearmTwistR,
+            THREE.MathUtils.clamp((solvedPose.RightLowerArm.y || 0) * mirrorSign, -0.65, 0.65),
+            0.25
+          );
+        }
+      } catch {
+        // Ignore transient malformed landmarks
+      }
+    }
+
+    if ((this._kalidoTick & 1) === 1 && face && face.length >= 468) {
+      try {
+        const solvedFace = KalidoFace.solve(face, {
+          runtime: 'mediapipe',
+          imageSize: { width: videoW, height: videoH },
+        });
+        if (solvedFace?.head) {
+          const mirrorSign = this.isMirrored ? -1 : 1;
+          this.kinematics.headPitch = THREE.MathUtils.lerp(
+            this.kinematics.headPitch,
+            THREE.MathUtils.clamp(solvedFace.head.x || 0, -0.45, 0.45),
+            0.28
+          );
+          this.kinematics.headYaw = THREE.MathUtils.lerp(
+            this.kinematics.headYaw,
+            THREE.MathUtils.clamp((solvedFace.head.y || 0) * mirrorSign, -0.65, 0.65),
+            0.28
+          );
+          this.kinematics.headRoll = THREE.MathUtils.lerp(
+            this.kinematics.headRoll,
+            THREE.MathUtils.clamp((solvedFace.head.z || 0) * mirrorSign, -0.45, 0.45),
+            0.28
+          );
+        }
+      } catch {
+        // Ignore transient face solver edge cases
+      }
     }
 
     let visSum = 0;
