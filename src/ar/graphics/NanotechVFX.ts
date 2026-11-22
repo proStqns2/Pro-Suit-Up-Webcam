@@ -294,23 +294,38 @@ export class NanotechVFX {
     this.arcSprite.scale.setScalar(arcScale * arcPulse);
     this.arcSprite.material.opacity = Math.min(suitProgress * 1.4, 0.72) * (isStealth ? 0.35 : 0.85);
 
-    const spawning = suitProgress > 0.02 && suitProgress < 0.96;
+    const spawning = suitProgress > 0.02 && suitProgress < 0.97;
     const bodyScale = rig.mats.sharedUniforms.uBodyScale.value;
 
     for (let i = 0; i < this.nanoCount; i++) {
       if (this.nanoLives[i] <= 0) {
-        if (spawning && Math.random() < 0.35) {
-          const r = (0.1 + suitProgress * 1.6) * bodyScale;
-          const theta = Math.random() * Math.PI * 2;
-          const phi = (Math.random() - 0.5) * Math.PI;
-          this.nanoPositions[i * 3] = rig.arcWorldPos.x + Math.cos(theta) * Math.cos(phi) * r * 0.65;
-          this.nanoPositions[i * 3 + 1] = rig.arcWorldPos.y + Math.sin(phi) * r * 0.95;
-          this.nanoPositions[i * 3 + 2] = rig.arcWorldPos.z + (Math.random() - 0.5) * bodyScale * 0.5;
+        if (spawning && Math.random() < 0.45) {
+          const branch = i % 5;
+          const anchor =
+            branch === 0
+              ? rig.headWorldPos
+              : branch === 1
+                ? rig.shoulderWorldPos.left
+                : branch === 2
+                  ? rig.shoulderWorldPos.right
+                  : branch === 3
+                    ? rig.palmWorldPos.left
+                    : rig.palmWorldPos.right;
 
-          this.nanoVelocities[i * 3] = (Math.random() - 0.5) * 0.45;
-          this.nanoVelocities[i * 3 + 1] = (Math.random() - 0.3) * 0.55;
-          this.nanoVelocities[i * 3 + 2] = (Math.random() - 0.5) * 0.25;
-          this.nanoLives[i] = 0.35 + Math.random() * 0.35;
+          const swarmT = THREE.MathUtils.clamp(suitProgress * 1.15 - Math.random() * 0.25, 0, 1);
+          const ox = THREE.MathUtils.lerp(rig.arcWorldPos.x, anchor.x, swarmT);
+          const oy = THREE.MathUtils.lerp(rig.arcWorldPos.y, anchor.y, swarmT);
+          const oz = THREE.MathUtils.lerp(rig.arcWorldPos.z, anchor.z, swarmT);
+
+          const jitter = bodyScale * 0.16;
+          this.nanoPositions[i * 3] = ox + (Math.random() - 0.5) * jitter;
+          this.nanoPositions[i * 3 + 1] = oy + (Math.random() - 0.5) * jitter;
+          this.nanoPositions[i * 3 + 2] = oz + (Math.random() - 0.5) * jitter;
+
+          this.nanoVelocities[i * 3] = (anchor.x - ox) * 1.4 + (Math.random() - 0.5) * 0.22;
+          this.nanoVelocities[i * 3 + 1] = (anchor.y - oy) * 1.4 + (Math.random() - 0.5) * 0.22;
+          this.nanoVelocities[i * 3 + 2] = (anchor.z - oz) * 1.4 + (Math.random() - 0.5) * 0.18;
+          this.nanoLives[i] = 0.28 + Math.random() * 0.28;
         } else {
           this.nanoPositions[i * 3 + 2] = 999;
         }

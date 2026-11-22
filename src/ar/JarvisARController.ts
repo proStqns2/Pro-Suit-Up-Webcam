@@ -23,6 +23,7 @@ export interface HudSnapshot {
   calibrated: boolean;
   luma: number;
   helmetOpen: boolean;
+  mechaInspect: boolean;
   repL: number;
   repR: number;
   isStealth: boolean;
@@ -30,6 +31,7 @@ export interface HudSnapshot {
   voiceEnabled: boolean;
   audioEnabled: boolean;
   isDemoMode: boolean;
+  fitScale: number;
   logs: string[];
 }
 
@@ -101,6 +103,12 @@ export class JarvisARController {
   private arcEnergy = 100.0;
   private voiceEnabled = false;
   private isDemoMode = false;
+  private fitScale = 1.0;
+
+  private demoYawTarget = 0;
+  private isDraggingYaw = false;
+  private dragStartX = 0;
+  private dragStartYaw = 0;
 
   private bootState: 'loading' | 'ready' | 'error' = 'loading';
   private bootProgress = 5;
@@ -124,7 +132,9 @@ export class JarvisARController {
 
   private readonly _onResizeBound: () => void;
   private readonly _onKeyDownBound: (e: KeyboardEvent) => void;
-  private readonly _onPointerDownBound: () => void;
+  private readonly _onPointerDownBound: (e: PointerEvent) => void;
+  private readonly _onPointerMoveBound: (e: PointerEvent) => void;
+  private readonly _onPointerUpBound: () => void;
   private readonly _onContextLostBound: (e: Event) => void;
   private readonly _onContextRestoredBound: () => void;
 
@@ -173,9 +183,24 @@ export class JarvisARController {
 
     this._onResizeBound = () => this._onResize();
     this._onKeyDownBound = (e: KeyboardEvent) => this._handleKeyDown(e);
-    this._onPointerDownBound = () => {
+    this._onPointerDownBound = (e: PointerEvent) => {
       this.audio.unlock();
-      window.removeEventListener('pointerdown', this._onPointerDownBound);
+      if (this.isDemoMode && e.button === 0) {
+        const target = e.target as HTMLElement | null;
+        if (!target || !target.closest('button')) {
+          this.isDraggingYaw = true;
+          this.dragStartX = e.clientX;
+          this.dragStartYaw = this.demoYawTarget;
+        }
+      }
+    };
+    this._onPointerMoveBound = (e: PointerEvent) => {
+      if (!this.isDraggingYaw || !this.isDemoMode) return;
+      const dx = e.clientX - this.dragStartX;
+      this.demoYawTarget = this.dragStartYaw + (dx / Math.max(window.innerWidth, 360)) * 5.2;
+    };
+    this._onPointerUpBound = () => {
+      this.isDraggingYaw = false;
     };
     this._onContextLostBound = (e: Event) => {
       e.preventDefault();
@@ -189,6 +214,9 @@ export class JarvisARController {
     window.addEventListener('resize', this._onResizeBound);
     window.addEventListener('keydown', this._onKeyDownBound);
     window.addEventListener('pointerdown', this._onPointerDownBound);
+    window.addEventListener('pointermove', this._onPointerMoveBound);
+    window.addEventListener('pointerup', this._onPointerUpBound);
+    window.addEventListener('pointercancel', this._onPointerUpBound);
     this.webglCanvas.addEventListener('webglcontextlost', this._onContextLostBound);
     this.webglCanvas.addEventListener('webglcontextrestored', this._onContextRestoredBound);
   }
@@ -224,6 +252,7 @@ export class JarvisARController {
       calibrated: this.calibration.calibrated,
       luma: this.envLighting.lumaSummary,
       helmetOpen: this.armorRig.helmetOpenTarget > 0.5,
+      mechaInspect: this.armorRig.mechaInspectTarget > 0.5,
       repL: this.armorRig.repulsorCharge.left,
       repR: this.armorRig.repulsorCharge.right,
       isStealth: this.isStealth,
@@ -231,6 +260,7 @@ export class JarvisARController {
       voiceEnabled: this.voiceEnabled,
       audioEnabled: this.audio.enabled,
       isDemoMode: this.isDemoMode,
+      fitScale: this.fitScale,
       logs: this.logs,
     });
   }
@@ -238,6 +268,9 @@ export class JarvisARController {
   async start(): Promise<void> {
     this._stopLoop();
     this.isDemoMode = false;
+    this.demoYawTarget = 0;
+    this.tracking.demoYaw = 0;
+    this.isDraggingYaw = false;
     this.bootState = 'loading';
     this.bootTitle = 'STARK INDUSTRIES — MK-85';
     this.bootProgress = 10;
@@ -291,6 +324,9 @@ export class JarvisARController {
     this._stopWebcamStream();
 
     this.isDemoMode = true;
+    this.demoYawTarget = 0;
+    this.tracking.demoYaw = 0;
+    this.isDraggingYaw = false;
     this.tracking.enableDemoMode();
     this.calibration.resetCalibration();
 
@@ -367,6 +403,14 @@ export class JarvisARController {
     this.emitSnapshot();
   }
 
+  toggleMechaInspect(forceState: boolean | null = null): void {
+    const next = forceState !== null ? (forceState ? 1 : 0) : this.armorRig.mechaInspectTarget > 0.5 ? 0 : 1;
+    this.armorRig.mechaInspectTarget = next;
+    this.audio.playHelmetServo(next === 1);
+    this.addLog(next === 1 ? 'Inspection mécatronique : capots ouverts.' : 'Capots d’avant-bras verrouillés.');
+    this.emitSnapshot();
+  }
+
   fireRepulsor(side: 'left' | 'right' = 'right'): void {
     this.vfx.triggerBlast(side);
     this.audio.playRepulsorBlast();
@@ -391,6 +435,14 @@ export class JarvisARController {
   resetCalibration(): void {
     this.calibration.resetCalibration();
     this.addLog('Recalibrage morphologique lancé...');
+    this.emitSnapshot();
+  }
+
+  adjustFitScale(delta: number): void {
+    const next = Math.min(1.35, Math.max(0.8, Math.round((this.fitScale + delta) * 20) / 20));
+    if (Math.abs(next - this.fitScale) < 1e-4) return;
+    this.fitScale = next;
+    this.addLog(`Enveloppe armure ajustée à ${Math.round(this.fitScale * 100)}%.`);
     this.emitSnapshot();
   }
 
@@ -433,6 +485,7 @@ export class JarvisARController {
 
       if (text.includes('ouvre') || text.includes('open')) this.toggleHelmet(true);
       else if (text.includes('ferme') || text.includes('close') || text.includes('seal')) this.toggleHelmet(false);
+      else if (text.includes('mécanique') || text.includes('inspection')) this.toggleMechaInspect();
       else if (text.includes('armure') || text.includes('suit') || text.includes('nanotech')) this.triggerSuitUp();
       else if (text.includes('tir') || text.includes('répulseur') || text.includes('repulsor') || text.includes('fire')) {
         this.fireRepulsor('right');
@@ -469,11 +522,14 @@ export class JarvisARController {
     const key = e.key.toLowerCase();
     if (key === 's') this.triggerSuitUp();
     else if (key === 'h') this.toggleHelmet();
+    else if (key === 'x') this.toggleMechaInspect();
     else if (key === 'r') this.fireRepulsor('right');
     else if (key === 'd') this.toggleDebug();
     else if (key === 'm') this.toggleStealthMode();
     else if (key === 'v') this.toggleVoiceControl();
     else if (key === 'c') this.resetCalibration();
+    else if (key === '[' || key === '-') this.adjustFitScale(-0.05);
+    else if (key === ']' || key === '+' || key === '=') this.adjustFitScale(0.05);
   }
 
   private _evaluateGestures(dt: number, nowMs: number): void {
@@ -568,10 +624,24 @@ export class JarvisARController {
     const canvasW = this.webglCanvas.clientWidth || window.innerWidth;
     const canvasH = this.webglCanvas.clientHeight || window.innerHeight;
 
+    if (this.isDemoMode) {
+      this.tracking.demoYaw = THREE.MathUtils.damp(this.tracking.demoYaw, this.demoYawTarget, 9.0, dt);
+    }
+
     const trackRes = this.tracking.processFrame(this.isDemoMode ? null : this.videoEl, timeSec);
 
-    this.calibration.update(trackRes, videoW, videoH, canvasW, canvasH, timeSec);
-    this.armorRig.update(this.calibration, dt);
+    this.calibration.update(
+      trackRes,
+      videoW,
+      videoH,
+      canvasW,
+      canvasH,
+      timeSec,
+      this.tracking.maskBuffer,
+      this.tracking.maskWidth,
+      this.tracking.maskHeight
+    );
+    this.armorRig.update(this.calibration, dt, this.fitScale, timeSec);
     this._evaluateGestures(dt, nowMs);
 
     if (this.suitAnimating) {
@@ -617,6 +687,9 @@ export class JarvisARController {
     window.removeEventListener('resize', this._onResizeBound);
     window.removeEventListener('keydown', this._onKeyDownBound);
     window.removeEventListener('pointerdown', this._onPointerDownBound);
+    window.removeEventListener('pointermove', this._onPointerMoveBound);
+    window.removeEventListener('pointerup', this._onPointerUpBound);
+    window.removeEventListener('pointercancel', this._onPointerUpBound);
     this.webglCanvas.removeEventListener('webglcontextlost', this._onContextLostBound);
     this.webglCanvas.removeEventListener('webglcontextrestored', this._onContextRestoredBound);
 

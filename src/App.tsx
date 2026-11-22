@@ -17,6 +17,7 @@ const INITIAL_HUD: HudSnapshot = {
   calibrated: false,
   luma: 0.55,
   helmetOpen: false,
+  mechaInspect: false,
   repL: 0,
   repR: 0,
   isStealth: false,
@@ -24,6 +25,7 @@ const INITIAL_HUD: HudSnapshot = {
   voiceEnabled: false,
   audioEnabled: true,
   isDemoMode: false,
+  fitScale: 1.0,
   logs: [],
 };
 
@@ -62,7 +64,11 @@ export default function App() {
   const arcOffset = RING_CIRCUMFERENCE * (1 - arcClamped / 100);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-[#03070d] select-none">
+    <div
+      className={`relative w-screen h-screen overflow-hidden bg-[#03070d] select-none ${
+        hud.isDemoMode ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
+    >
       {/* Studio Tactical Backdrop for Demo 3D mode (when no webcam feed) */}
       {hud.isDemoMode && (
         <div
@@ -108,49 +114,49 @@ export default function App() {
       <div className="hud-reticle-corner br z-[4]" />
 
       {/* Top-Left Panel: Biometric Sensors & System Telemetry */}
-      <aside className="hud-panel absolute top-5 left-5 z-[5] w-[268px] px-3.5 py-3 max-md:w-auto max-md:max-w-[46vw]">
-        <div className="font-display text-[13px] font-bold tracking-[0.1em] text-[var(--hud-cyan)] flex items-center justify-between gap-2">
+      <aside className="hud-panel absolute top-3 left-3 z-[5] w-[232px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]">
+        <div className="font-display text-[12px] font-bold tracking-[0.09em] text-[var(--hud-cyan)] flex items-center justify-between gap-2">
           <span>J.A.R.V.I.S. · MK-85</span>
-          <span className="font-mono-tech text-[11px] text-[var(--hud-gold)]">
+          <span className="font-mono-tech text-[10px] text-[var(--hud-gold)]">
             {hud.isDemoMode ? 'DÉMO 3D' : 'AR LIVE'}
           </span>
         </div>
-        <div className="font-mono-tech text-[11px] text-[var(--hud-gold)] mt-1 mb-2.5 tracking-[0.05em] truncate">
+        <div className="font-mono-tech text-[10px] text-[var(--hud-gold)] mt-0.5 mb-2 tracking-[0.04em] truncate">
           {hud.systemState}
         </div>
 
-        <div className="flex flex-col gap-1 font-mono-tech text-[11.5px]">
+        <div className="flex flex-col gap-0.5 font-mono-tech text-[10.5px]">
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">SOURCE OPTIQUE</span>
+            <span className="text-[#d2f6ff]/70">OPTIQUE</span>
             <span className="text-[var(--hud-cyan)] font-semibold">{hud.webcamStatus}</span>
           </div>
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">HOLISTIC MESH</span>
-            <span className="text-[var(--hud-cyan)] font-semibold truncate max-w-[132px]">
+            <span className="text-[#d2f6ff]/70">TRACKING</span>
+            <span className="text-[var(--hud-cyan)] font-semibold truncate max-w-[120px]">
               {hud.holisticInfo}
             </span>
           </div>
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">ONE-EURO 60FPS</span>
+            <span className="text-[#d2f6ff]/70">CADENCE</span>
             <span className="text-[var(--hud-cyan)] font-semibold">{Math.round(hud.fps)} FPS</span>
           </div>
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">MORPHOLOGIE</span>
+            <span className="text-[#d2f6ff]/70">CORPS</span>
             <span className="text-[var(--hud-cyan)] font-semibold">
-              {hud.calibrated ? hud.calibReadout : `CALIB... ${hud.calibReadout}`}
+              {hud.calibrated ? hud.calibReadout : `CALIB ${hud.calibReadout}`}
             </span>
           </div>
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">ENV LIGHTING</span>
-            <span className="text-[var(--hud-cyan)] font-semibold">{Math.round(hud.luma * 100)}% LUM</span>
+            <span className="text-[#d2f6ff]/70">LUMIÈRE</span>
+            <span className="text-[var(--hud-cyan)] font-semibold">{Math.round(hud.luma * 100)}%</span>
           </div>
         </div>
       </aside>
 
       {/* Top-Right Panel: Sync & ARC Reactor Gauges */}
-      <aside className="hud-panel absolute top-5 right-5 z-[5] w-[244px] px-3.5 py-3 max-md:w-auto max-md:max-w-[46vw]">
-        <div className="flex justify-around gap-2.5">
-          <div className="relative w-[80px] h-[80px]">
+      <aside className="hud-panel absolute top-3 right-3 z-[5] w-[206px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]">
+        <div className="flex justify-around gap-2">
+          <div className="relative w-[68px] h-[68px]">
             <svg viewBox="0 0 100 100" className="arc-svg">
               <circle cx="50" cy="50" r="40" className="arc-bg" />
               <circle
@@ -162,16 +168,16 @@ export default function App() {
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="font-display font-mono-tech text-[14px] font-bold text-white">
+              <span className="font-display font-mono-tech text-[13px] font-bold text-white">
                 {syncClamped}%
               </span>
-              <span className="font-mono-tech text-[9.5px] text-[var(--hud-cyan)] tracking-[0.08em]">
+              <span className="font-mono-tech text-[8.5px] text-[var(--hud-cyan)] tracking-[0.08em]">
                 SYNC
               </span>
             </div>
           </div>
 
-          <div className="relative w-[80px] h-[80px]">
+          <div className="relative w-[68px] h-[68px]">
             <svg viewBox="0 0 100 100" className="arc-svg">
               <circle cx="50" cy="50" r="40" className="arc-bg" />
               <circle
@@ -183,42 +189,42 @@ export default function App() {
               />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
-              <span className="font-display font-mono-tech text-[14px] font-bold text-white">
+              <span className="font-display font-mono-tech text-[13px] font-bold text-white">
                 {arcClamped}%
               </span>
-              <span className="font-mono-tech text-[9.5px] text-[var(--hud-cyan)] tracking-[0.08em]">
-                ARC CORE
+              <span className="font-mono-tech text-[8.5px] text-[var(--hud-cyan)] tracking-[0.08em]">
+                ARC
               </span>
             </div>
           </div>
         </div>
 
-        <div className="mt-2.5 px-2 py-1 border border-[var(--hud-border)] bg-[rgba(59,240,255,0.08)] flex items-center justify-between text-[11px] font-mono-tech tracking-[0.06em] text-[var(--hud-cyan)]">
-          <span>{hud.isStealth ? 'MODE FURTIF ACTIF' : 'MODE COMBAT ACTIF'}</span>
+        <div className="mt-2 px-2 py-0.5 border border-[var(--hud-border)] bg-[rgba(59,240,255,0.08)] flex items-center justify-between text-[10px] font-mono-tech tracking-[0.06em] text-[var(--hud-cyan)]">
+          <span>{hud.isStealth ? 'MODE FURTIF' : 'MODE COMBAT'}</span>
           <span className="text-[var(--hud-gold)]">{hud.isStealth ? 'STEALTH' : 'MK-85'}</span>
         </div>
       </aside>
 
       {/* Bottom-Left Panel: Gesture State & Telemetry Log */}
       {!dockCollapsed && (
-        <aside className="hud-panel absolute bottom-5 left-5 z-[5] w-[305px] px-3.5 py-2.5 max-lg:hidden">
-          <div className="font-display text-[11px] text-[var(--hud-cyan)] mb-1.5 tracking-[0.08em]">
+        <aside className="hud-panel absolute bottom-14 left-3 z-[5] w-[248px] px-3 py-2 max-xl:hidden">
+          <div className="font-display text-[10px] text-[var(--hud-cyan)] mb-1 tracking-[0.08em]">
             TÉLÉMÉTRIE &amp; GESTES
           </div>
-          <div className="flex items-center gap-2 text-[11px] font-mono-tech text-[#bfefff] mb-1.5 whitespace-nowrap overflow-hidden">
+          <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#bfefff] mb-1 whitespace-nowrap overflow-hidden">
             <span className={hud.helmetOpen ? 'text-[var(--hud-gold)] font-semibold' : ''}>
               {hud.helmetOpen ? 'Casque: Ouvert' : 'Casque: Scellé'}
             </span>
             <span aria-hidden="true">·</span>
             <span className={hud.repL > 0.45 ? 'text-[var(--hud-cyan)] font-semibold' : ''}>
-              {hud.repL > 0.45 ? 'G-Rép: Actif' : 'G-Rép: Veille'}
+              {hud.repL > 0.45 ? 'G: Actif' : 'G: Prêt'}
             </span>
             <span aria-hidden="true">·</span>
             <span className={hud.repR > 0.45 ? 'text-[var(--hud-cyan)] font-semibold' : ''}>
-              {hud.repR > 0.45 ? 'D-Rép: Actif' : 'D-Rép: Veille'}
+              {hud.repR > 0.45 ? 'D: Actif' : 'D: Prêt'}
             </span>
           </div>
-          <div className="h-[52px] overflow-hidden font-mono-tech text-[10.5px] leading-[1.35] text-[#d7f8ff]/85">
+          <div className="h-[36px] overflow-hidden font-mono-tech text-[9.5px] leading-[1.3] text-[#d7f8ff]/80">
             {hud.logs.map((entry, idx) => (
               <div key={idx} className="truncate">
                 {entry}
@@ -228,85 +234,112 @@ export default function App() {
         </aside>
       )}
 
-      {/* Collapsible Bottom Tactical Control Dock */}
+      {/* Collapsible Single-Row Bottom Tactical Control Dock */}
       <div
-        className={`fixed bottom-4 left-1/2 -translate-x-1/2 z-[6] flex flex-col items-center transition-transform duration-200 ${
-          dockCollapsed ? 'translate-y-[calc(100%-24px)]' : 'translate-y-0'
+        className={`fixed bottom-2 left-1/2 -translate-x-1/2 z-[6] flex flex-col items-center max-w-[98vw] transition-transform duration-200 ${
+          dockCollapsed ? 'translate-y-[calc(100%-22px)]' : 'translate-y-0'
         }`}
       >
         <button
           type="button"
           onClick={() => setDockCollapsed((v) => !v)}
-          className="px-3 py-1 bg-[var(--hud-bg)] border border-b-0 border-[var(--hud-border)] text-[11px] font-mono-tech text-[var(--hud-cyan)] hover:text-white flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+          className="px-2.5 py-0.5 bg-[var(--hud-bg)] border border-b-0 border-[var(--hud-border)] text-[10px] font-mono-tech text-[var(--hud-cyan)] hover:text-white flex items-center gap-1 cursor-pointer whitespace-nowrap"
         >
           {dockCollapsed ? (
             <>
-              <ChevronUp className="w-3.5 h-3.5" />
-              <span>Afficher les commandes</span>
+              <ChevronUp className="w-3 h-3" />
+              <span>Commandes</span>
             </>
           ) : (
             <>
-              <ChevronDown className="w-3.5 h-3.5" />
-              <span>Masquer les commandes</span>
+              <ChevronDown className="w-3 h-3" />
+              <span>Masquer</span>
             </>
           )}
         </button>
 
-        <div className="hud-panel px-2.5 py-2 max-w-[94vw] flex flex-wrap items-center justify-center gap-1.5">
+        <div className="hud-panel px-1.5 py-1 max-w-[97vw] flex flex-nowrap items-center gap-1 overflow-x-auto">
           <HudActionButton
             kbd="S"
-            label="Suit-Up Nanotech"
+            label="Suit-Up"
             onClick={() => controllerRef.current?.triggerSuitUp()}
           />
           <HudActionButton
             kbd="H"
-            label={hud.helmetOpen ? 'Fermer casque' : 'Ouvrir casque'}
+            label={hud.helmetOpen ? 'Sceller' : 'Casque'}
             active={hud.helmetOpen}
             onClick={() => controllerRef.current?.toggleHelmet()}
           />
           <HudActionButton
+            kbd="X"
+            label="Méca"
+            active={hud.mechaInspect}
+            onClick={() => controllerRef.current?.toggleMechaInspect()}
+          />
+          <HudActionButton
             kbd="R"
-            label="Tir répulseur"
+            label="Tir"
             onClick={() => controllerRef.current?.fireRepulsor('right')}
           />
           <HudActionButton
             kbd="D"
-            label="Squelette 2D"
+            label="Squel."
             active={hud.debugEnabled}
             onClick={() => controllerRef.current?.toggleDebug()}
           />
           <HudActionButton
             kbd="M"
-            label={hud.isStealth ? 'Mode Combat' : 'Mode Furtif'}
+            label={hud.isStealth ? 'Combat' : 'Furtif'}
             active={hud.isStealth}
             onClick={() => controllerRef.current?.toggleStealthMode()}
           />
           <HudActionButton
             kbd="V"
-            label="Voix J.A.R.V.I.S."
+            label="Voix"
             active={hud.voiceEnabled}
             onClick={() => controllerRef.current?.toggleVoiceControl()}
           />
           <HudActionButton
             kbd="C"
-            label="Recalibrer"
+            label="Calib"
             onClick={() => controllerRef.current?.resetCalibration()}
           />
           <HudActionButton
             kbd="♪"
-            label={hud.audioEnabled ? 'Audio actif' : 'Audio muet'}
+            label={hud.audioEnabled ? 'Son' : 'Muet'}
             active={hud.audioEnabled}
             onClick={() => controllerRef.current?.toggleAudio()}
           />
           <HudActionButton
             kbd="3D"
-            label={hud.isDemoMode ? 'Activer Webcam' : 'Démo 3D'}
+            label={hud.isDemoMode ? 'Webcam' : 'Démo 3D'}
             active={hud.isDemoMode}
             onClick={() => {
               if (hud.isDemoMode) void controllerRef.current?.start();
               else controllerRef.current?.startDemoMode();
             }}
           />
+          <div className="flex items-center border border-[var(--hud-border)] bg-[rgba(10,26,44,0.82)] shrink-0">
+            <button
+              type="button"
+              aria-label="Réduire la taille de l'armure"
+              onClick={() => controllerRef.current?.adjustFitScale(-0.05)}
+              className="px-1.5 py-1 font-display text-[10px] font-bold text-[var(--hud-cyan)] hover:text-white hover:bg-[rgba(59,240,255,0.18)] cursor-pointer transition-colors"
+            >
+              −
+            </button>
+            <span className="px-1.5 py-1 font-mono-tech text-[10px] text-[#dff9ff] border-x border-[var(--hud-border)] whitespace-nowrap">
+              {Math.round(hud.fitScale * 100)}%
+            </span>
+            <button
+              type="button"
+              aria-label="Agrandir la taille de l'armure"
+              onClick={() => controllerRef.current?.adjustFitScale(0.05)}
+              className="px-1.5 py-1 font-display text-[10px] font-bold text-[var(--hud-cyan)] hover:text-white hover:bg-[rgba(59,240,255,0.18)] cursor-pointer transition-colors"
+            >
+              +
+            </button>
+          </div>
         </div>
       </div>
 
@@ -366,13 +399,13 @@ function HudActionButton({ kbd, label, active = false, onClick }: HudActionButto
     <button
       type="button"
       onClick={onClick}
-      className={`px-2.5 py-1.5 border font-mono-tech text-[11px] flex items-center gap-1.5 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+      className={`px-2 py-1 border font-mono-tech text-[10.5px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
         active
           ? 'bg-[rgba(59,240,255,0.24)] border-[var(--hud-gold)] text-white'
           : 'bg-[rgba(10,26,44,0.82)] border-[var(--hud-border)] text-[#dff9ff] hover:bg-[rgba(59,240,255,0.18)] hover:border-[var(--hud-cyan)]'
       }`}
     >
-      <kbd className="inline-block min-w-[18px] text-center px-1 py-0.5 font-display text-[10px] font-bold bg-[rgba(59,240,255,0.16)] border border-[var(--hud-cyan)] text-[var(--hud-cyan)]">
+      <kbd className="inline-block min-w-[16px] text-center px-1 py-0.5 font-display text-[9px] font-bold bg-[rgba(59,240,255,0.16)] border border-[var(--hud-cyan)] text-[var(--hud-cyan)]">
         {kbd}
       </kbd>
       <span>{label}</span>

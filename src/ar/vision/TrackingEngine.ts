@@ -25,6 +25,7 @@ export class TrackingEngine {
 
   private lastVideoTime = -1;
   private lastTimestampMs = 0;
+  private _maskFrameCounter = 0;
 
   public maskWidth = 0;
   public maskHeight = 0;
@@ -127,11 +128,11 @@ export class TrackingEngine {
         delegate,
       },
       runningMode: 'VIDEO',
-      minFaceDetectionConfidence: 0.5,
-      minFacePresenceConfidence: 0.5,
-      minPoseDetectionConfidence: 0.5,
-      minPosePresenceConfidence: 0.5,
-      minHandLandmarksConfidence: 0.5,
+      minFaceDetectionConfidence: 0.45,
+      minFacePresenceConfidence: 0.45,
+      minPoseDetectionConfidence: 0.45,
+      minPosePresenceConfidence: 0.45,
+      minHandLandmarksConfidence: 0.45,
       outputFaceBlendshapes: true,
       outputPoseSegmentationMasks: true,
     });
@@ -156,6 +157,7 @@ export class TrackingEngine {
     this.lastTimestampMs = ts;
 
     this.maskUpdated = false;
+    const copyMaskThisFrame = (this._maskFrameCounter++ % 3) === 0;
 
     if (this.mode === 'holistic' && this.holistic) {
       this.holistic.detectForVideo(videoEl, ts, (res) => {
@@ -168,8 +170,10 @@ export class TrackingEngine {
         this.latestResult.rightHandLandmarks = res.rightHandLandmarks?.[0] || null;
         this.latestResult.rightHandWorldLandmarks = res.rightHandWorldLandmarks?.[0] || null;
 
-        const mask = res.poseSegmentationMasks?.[0];
-        if (mask) this._copyMask(mask);
+        if (copyMaskThisFrame) {
+          const mask = res.poseSegmentationMasks?.[0];
+          if (mask) this._copyMask(mask);
+        }
       });
     } else if (this.mode === 'modular' && this.poseFallback && this.handFallback && this.faceFallback) {
       const pRes = this.poseFallback.detectForVideo(videoEl, ts);
@@ -202,84 +206,116 @@ export class TrackingEngine {
       this.latestResult.rightHandLandmarks = rightH;
       this.latestResult.rightHandWorldLandmarks = rightHW;
 
-      const mask = pRes.segmentationMasks?.[0];
-      if (mask) this._copyMask(mask);
+      if (copyMaskThisFrame) {
+        const mask = pRes.segmentationMasks?.[0];
+        if (mask) this._copyMask(mask);
+      }
     }
 
     return this.latestResult;
   }
 
+  public demoYaw = 0;
+
   private _generateDemoFrame(timeSec: number): TrackingFrameResult {
-    const breathe = Math.sin(timeSec * 1.8) * 0.006;
-    const sway = Math.sin(timeSec * 0.7) * 0.014;
-    const headTurn = Math.sin(timeSec * 0.9) * 0.012;
+    const breathe = Math.sin(timeSec * 1.8) * 0.005;
+    const sway = Math.sin(timeSec * 0.65) * 0.01;
+    const headTurn = Math.sin(timeSec * 0.85) * 0.01;
     const rRaise = 0.5 + 0.5 * Math.sin(timeSec * 1.1);
+    const yawCos = Math.cos(this.demoYaw);
+    const yawSin = Math.sin(this.demoYaw);
 
     const setPose = (idx: number, nx: number, ny: number, nz: number, vis = 0.98) => {
-      this.demoPoseNorm[idx].x = nx;
+      const dx = nx - 0.5;
+      const rotX = dx * yawCos - nz * 0.32 * yawSin;
+      const rotZ = dx * yawSin * 1.6 + nz * yawCos;
+
+      this.demoPoseNorm[idx].x = 0.5 + rotX;
       this.demoPoseNorm[idx].y = ny;
-      this.demoPoseNorm[idx].z = nz;
+      this.demoPoseNorm[idx].z = rotZ;
       this.demoPoseNorm[idx].visibility = vis;
 
-      this.demoPoseWorld[idx].x = (0.5 - nx) * 1.4;
-      this.demoPoseWorld[idx].y = (ny - 0.5) * 1.3;
-      this.demoPoseWorld[idx].z = nz * 0.5;
+      this.demoPoseWorld[idx].x = -rotX * 1.45;
+      this.demoPoseWorld[idx].y = (ny - 0.5) * 1.45;
+      this.demoPoseWorld[idx].z = rotZ * 0.55;
       this.demoPoseWorld[idx].visibility = vis;
     };
 
-    // Head & Ears
-    setPose(0, 0.5 + sway + headTurn * 0.5, 0.24 + breathe, -0.14);
-    setPose(7, 0.545 + sway, 0.235 + breathe, -0.05);
-    setPose(8, 0.455 + sway, 0.235 + breathe, -0.05);
+    // Head & Ears (y ~ 0.145)
+    setPose(0, 0.5 + sway + headTurn * 0.5, 0.145 + breathe, -0.09);
+    setPose(7, 0.535 + sway, 0.14 + breathe, -0.02);
+    setPose(8, 0.465 + sway, 0.14 + breathe, -0.02);
 
-    // Shoulders (wider heroic Mark 85 stance)
-    setPose(11, 0.625 + sway, 0.40 + breathe, 0.0);
-    setPose(12, 0.375 + sway, 0.40 + breathe, 0.0);
+    // Shoulders (heroic V-taper stance)
+    setPose(11, 0.595 + sway, 0.255 + breathe, 0.0);
+    setPose(12, 0.405 + sway, 0.255 + breathe, 0.0);
 
-    // Left Arm (relaxed athletic pose)
-    setPose(13, 0.69 + sway, 0.57 + breathe, 0.04);
-    setPose(15, 0.67 + sway, 0.73 + breathe, -0.08);
-    setPose(17, 0.675 + sway, 0.78 + breathe, -0.1);
-    setPose(19, 0.66 + sway, 0.78 + breathe, -0.11);
+    // Left Arm
+    setPose(13, 0.64 + sway, 0.39 + breathe, 0.02);
+    setPose(15, 0.65 + sway, 0.515 + breathe, -0.05);
+    setPose(17, 0.655 + sway, 0.55 + breathe, -0.07);
+    setPose(19, 0.642 + sway, 0.55 + breathe, -0.08);
 
     // Right Arm (aiming repulsor dynamically)
-    const rElbowX = 0.30 + sway - rRaise * 0.02;
-    const rElbowY = 0.56 + breathe - rRaise * 0.05;
-    const rWristX = 0.33 + sway + rRaise * 0.02;
-    const rWristY = 0.64 + breathe - rRaise * 0.16;
-    const rWristZ = -0.14 - rRaise * 0.22;
+    const rElbowX = 0.35 - sway * 0.3 - rRaise * 0.015;
+    const rElbowY = 0.385 + breathe - rRaise * 0.04;
+    const rWristX = 0.345 + sway + rRaise * 0.02;
+    const rWristY = 0.48 + breathe - rRaise * 0.11;
+    const rWristZ = -0.09 - rRaise * 0.16;
     setPose(14, rElbowX, rElbowY, 0.02);
     setPose(16, rWristX, rWristY, rWristZ);
-    setPose(18, rWristX - 0.015, rWristY - 0.03, rWristZ - 0.02);
-    setPose(20, rWristX + 0.015, rWristY - 0.03, rWristZ - 0.02);
+    setPose(18, rWristX - 0.012, rWristY - 0.022, rWristZ - 0.02);
+    setPose(20, rWristX + 0.012, rWristY - 0.022, rWristZ - 0.02);
 
-    // Hips & Thighs
-    setPose(23, 0.58 + sway * 0.5, 0.79, 0.02, 0.92);
-    setPose(24, 0.42 + sway * 0.5, 0.79, 0.02, 0.92);
-    setPose(25, 0.59 + sway * 0.3, 1.06, 0.04, 0.85);
-    setPose(26, 0.41 + sway * 0.3, 1.06, 0.04, 0.85);
-    setPose(27, 0.60, 1.32, 0.08, 0.25);
-    setPose(28, 0.40, 1.32, 0.08, 0.25);
+    // Hips, Knees, Ankles & Armored Boots (full body cleanly visible in frame)
+    setPose(23, 0.552 + sway * 0.5, 0.515, 0.02, 0.98);
+    setPose(24, 0.448 + sway * 0.5, 0.515, 0.02, 0.98);
+    setPose(25, 0.56 + sway * 0.3, 0.695, 0.02, 0.96);
+    setPose(26, 0.44 + sway * 0.3, 0.695, 0.02, 0.96);
+    setPose(27, 0.568, 0.865, 0.04, 0.94);
+    setPose(28, 0.432, 0.865, 0.04, 0.94);
+    setPose(31, 0.576, 0.905, -0.09, 0.92);
+    setPose(32, 0.424, 0.905, -0.09, 0.92);
 
     // Face anchors [10 top, 152 chin, 234 leftCheek, 454 rightCheek, 1 noseTip, 168 bridge, 6]
-    const cx = 0.5 + sway + headTurn * 0.5;
-    const cy = 0.24 + breathe;
+    const cx = 0.5 + (sway + headTurn * 0.5) * yawCos;
+    const cy = 0.145 + breathe;
     const setFace = (idx: number, x: number, y: number, z: number) => {
       this.demoFace[idx].x = x;
       this.demoFace[idx].y = y;
       this.demoFace[idx].z = z;
     };
-    setFace(10, cx, cy - 0.085, -0.04);
-    setFace(152, cx, cy + 0.085, -0.02);
-    setFace(234, cx + 0.055, cy, 0.04);
-    setFace(454, cx - 0.055, cy, 0.04);
-    setFace(1, cx + headTurn * 0.3, cy + 0.01, -0.08);
-    setFace(168, cx + headTurn * 0.2, cy - 0.02, -0.07);
-    setFace(6, cx + headTurn * 0.2, cy - 0.01, -0.075);
+    setFace(10, cx, cy - 0.06, -0.04);
+    setFace(152, cx, cy + 0.06, -0.02);
+    setFace(234, cx + 0.04 * yawCos, cy, 0.035 + 0.04 * yawSin);
+    setFace(454, cx - 0.04 * yawCos, cy, 0.035 - 0.04 * yawSin);
+    setFace(1, cx + headTurn * 0.3 - 0.045 * yawSin, cy + 0.006, -0.065 * yawCos);
+    setFace(168, cx + headTurn * 0.2 - 0.035 * yawSin, cy - 0.015, -0.058 * yawCos);
+    setFace(6, cx + headTurn * 0.2 - 0.04 * yawSin, cy - 0.008, -0.062 * yawCos);
 
-    // Build realistic 21-point hands
-    this._populateDemoHand(this.demoLeftHand, 0.67 + sway, 0.73 + breathe, -0.08, 1, false);
-    this._populateDemoHand(this.demoRightHand, rWristX, rWristY, rWristZ, -1, rRaise > 0.65);
+    // Build realistic 21-point hands (with dynamic articulated finger curl cycle)
+    const leftCurl = 0.22 + 0.62 * (0.5 + 0.5 * Math.sin(timeSec * 1.45));
+    const rightOpen = rRaise > 0.52;
+    const rightCurl = rightOpen ? 0.04 : 0.65 * (1 - rRaise * 1.4);
+
+    this._populateDemoHand(
+      this.demoLeftHand,
+      0.5 + (0.15 + sway) * yawCos - (-0.05) * 0.32 * yawSin,
+      0.515 + breathe,
+      -0.05,
+      1,
+      false,
+      leftCurl
+    );
+    this._populateDemoHand(
+      this.demoRightHand,
+      0.5 + (rWristX - 0.5) * yawCos - rWristZ * 0.32 * yawSin,
+      rWristY,
+      rWristZ,
+      -1,
+      rightOpen,
+      Math.max(0, rightCurl)
+    );
 
     this.latestResult.poseLandmarks = this.demoPoseNorm;
     this.latestResult.poseWorldLandmarks = this.demoPoseWorld;
@@ -298,10 +334,12 @@ export class TrackingEngine {
     wy: number,
     wz: number,
     sideSign: number,
-    openPalm: boolean
+    openPalm: boolean,
+    curl = 0.25
   ): void {
-    const spread = openPalm ? 1.0 : 0.6;
-    const curl = openPalm ? 1.0 : 0.55;
+    const spread = openPalm ? 1.05 : 0.68;
+    const ext = 1.0 - curl * 0.62;
+    const zCurl = curl * 0.036;
     const setH = (i: number, dx: number, dy: number, dz: number) => {
       hand[i].x = wx + dx * sideSign;
       hand[i].y = wy + dy;
@@ -312,19 +350,19 @@ export class TrackingEngine {
     // Thumb
     setH(1, -0.018, -0.015, -0.01);
     setH(2, -0.032, -0.032, -0.018);
-    setH(3, -0.044, -0.048, -0.024);
-    setH(4, -0.055, -0.062, -0.028);
+    setH(3, -0.044 + curl * 0.012, -0.047 + curl * 0.006, -0.025 - zCurl * 0.35);
+    setH(4, -0.054 + curl * 0.02, -0.058 + curl * 0.014, -0.030 - zCurl * 0.65);
 
-    // 4 fingers
+    // 4 fingers (MCP -> PIP -> DIP -> TIP)
     const fingerOffsets = [-0.018, -0.005, 0.008, 0.021];
     for (let f = 0; f < 4; f++) {
       const baseIdx = 5 + f * 4;
       const fx = fingerOffsets[f] * spread;
       const lenScale = f === 1 ? 1.08 : f === 3 ? 0.82 : 0.96;
       setH(baseIdx, fx, -0.052, -0.005);
-      setH(baseIdx + 1, fx * 1.15, -0.052 - 0.026 * lenScale * curl, -0.01 * curl);
-      setH(baseIdx + 2, fx * 1.25, -0.052 - 0.048 * lenScale * curl, -0.012 * curl);
-      setH(baseIdx + 3, fx * 1.32, -0.052 - 0.066 * lenScale * curl, -0.014 * curl);
+      setH(baseIdx + 1, fx * 1.15, -0.052 - 0.026 * lenScale * ext, -0.009 - zCurl * 0.45);
+      setH(baseIdx + 2, fx * 1.24, -0.052 - 0.047 * lenScale * (ext * 0.92), -0.012 - zCurl * 0.95);
+      setH(baseIdx + 3, fx * 1.28, -0.052 - 0.064 * lenScale * (ext * 0.82), -0.014 - zCurl * 1.25);
     }
   }
 

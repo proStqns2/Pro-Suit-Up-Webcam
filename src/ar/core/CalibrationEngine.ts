@@ -17,17 +17,22 @@ export class CalibrationEngine {
   private camera: THREE.PerspectiveCamera;
   public isMirrored = true;
 
-  public readonly poseBank = new LandmarkFilterBank(33, 1.35, 0.09, 1.0);
-  public readonly leftHandBank = new LandmarkFilterBank(21, 1.85, 0.14, 1.2);
-  public readonly rightHandBank = new LandmarkFilterBank(21, 1.85, 0.14, 1.2);
-  public readonly faceAnchorBank = new LandmarkFilterBank(7, 1.65, 0.1, 1.0); // [10, 152, 234, 454, 1, 168, 6]
-  private readonly depthFilter = new OneEuroFilter(60, 0.9, 0.04, 1.0);
+  public readonly poseBank = new LandmarkFilterBank(33, 1.55, 0.11, 1.0);
+  public readonly leftHandBank = new LandmarkFilterBank(21, 2.0, 0.16, 1.2);
+  public readonly rightHandBank = new LandmarkFilterBank(21, 2.0, 0.16, 1.2);
+  // [10 foreheadTop, 152 chin, 234 leftEarCheek, 454 rightEarCheek, 1 noseTip, 168 browBridge, 6 midNose]
+  public readonly faceAnchorBank = new LandmarkFilterBank(7, 1.85, 0.12, 1.0);
+  private readonly depthFilter = new OneEuroFilter(60, 1.05, 0.05, 1.0);
+  private readonly torsoWidthRatioFilter = new OneEuroFilter(60, 0.7, 0.02, 1.0);
 
   public calibrated = false;
   public sampleCount = 0;
-  public metricShoulderWidth = 0.39;
-  public torsoAspectRatio = 1.42;
+  public metricShoulderWidth = 0.40;
+  public torsoAspectRatio = 1.38;
   public userDepth = 1.65;
+  public calibratedHeadW = 0.165;
+  public calibratedHeadH = 0.23;
+  public silhouetteChestWidthFactor = 1.0;
 
   public hasPose = false;
   public hasLeftHand = false;
@@ -42,6 +47,7 @@ export class CalibrationEngine {
   private readonly _vHipMid = new THREE.Vector3();
   private readonly _virtualHipL = new THREE.Vector3();
   private readonly _virtualHipR = new THREE.Vector3();
+  private readonly _handDelta = new THREE.Vector3();
   private readonly _faceIndices = [10, 152, 234, 454, 1, 168, 6];
   private readonly _keyIndices = [0, 11, 12, 13, 14, 15, 16];
 
@@ -52,13 +58,17 @@ export class CalibrationEngine {
   resetCalibration(): void {
     this.calibrated = false;
     this.sampleCount = 0;
-    this.metricShoulderWidth = 0.39;
-    this.torsoAspectRatio = 1.42;
+    this.metricShoulderWidth = 0.40;
+    this.torsoAspectRatio = 1.38;
+    this.calibratedHeadW = 0.165;
+    this.calibratedHeadH = 0.23;
+    this.silhouetteChestWidthFactor = 1.0;
     this.poseBank.resetAll();
     this.leftHandBank.resetAll();
     this.rightHandBank.resetAll();
     this.faceAnchorBank.resetAll();
     this.depthFilter.reset();
+    this.torsoWidthRatioFilter.reset();
   }
 
   videoToScreenNorm(
@@ -105,7 +115,10 @@ export class CalibrationEngine {
     videoH: number,
     canvasW: number,
     canvasH: number,
-    timestampSec: number
+    timestampSec: number,
+    maskBuffer: Uint8Array | null = null,
+    maskW = 0,
+    maskH = 0
   ): void {
     const poseNorm = trackingResult.poseLandmarks;
     const poseWorld = trackingResult.poseWorldLandmarks;
@@ -128,6 +141,7 @@ export class CalibrationEngine {
     const sLScreen = this.videoToScreenNorm(sLNorm, videoW, videoH, canvasW, canvasH);
     const sRScreen = this.videoToScreenNorm(sRNorm, videoW, videoH, canvasW, canvasH);
 
+    // 1. Auto-calibration métrique anatomique (épaules, ratio torse, silhouette)
     if (poseWorld && poseWorld.length >= 33) {
       const wSL = poseWorld[11];
       const wSR = poseWorld[12];
@@ -136,8 +150,8 @@ export class CalibrationEngine {
       const dzW = wSL.z - wSR.z;
       const worldSpan = Math.sqrt(dxW * dxW + dyW * dyW + dzW * dzW);
 
-      if (worldSpan > 0.22 && worldSpan < 0.65 && (sLNorm.visibility ?? 1) > 0.5 && (sRNorm.visibility ?? 1) > 0.5) {
-        const alpha = this.sampleCount < 45 ? 0.14 : 0.015;
+      if (worldSpan > 0.24 && worldSpan < 0.62 && (sLNorm.visibility ?? 1) > 0.45 && (sRNorm.visibility ?? 1) > 0.45) {
+        const alpha = this.sampleCount < 45 ? 0.16 : 0.02;
         this.metricShoulderWidth = THREE.MathUtils.lerp(this.metricShoulderWidth, worldSpan, alpha);
 
         const hL = poseWorld[23];
@@ -145,12 +159,12 @@ export class CalibrationEngine {
         const sMidY = (wSL.y + wSR.y) * 0.5;
         const hMidY = (hL.y + hR.y) * 0.5;
         const tH = Math.abs(hMidY - sMidY);
-        if (tH > 0.3 && tH < 0.8) {
+        if (tH > 0.3 && tH < 0.78) {
           this.torsoAspectRatio = THREE.MathUtils.lerp(this.torsoAspectRatio, tH / worldSpan, alpha);
         }
 
         this.sampleCount++;
-        if (this.sampleCount >= 24) this.calibrated = true;
+        if (this.sampleCount >= 20) this.calibrated = true;
       }
     }
 
@@ -158,17 +172,59 @@ export class CalibrationEngine {
     const ndcDy = (sLScreen.sy - sRScreen.sy) * 2.0 * tanHalfFov;
     const apparentSpan = Math.sqrt(ndcDx * ndcDx + ndcDy * ndcDy);
 
-    if (apparentSpan > 0.06) {
+    const face = trackingResult.faceLandmarks;
+    let faceDepthEst: number | null = null;
+    if (face && face.length >= 468) {
+      const fL = this.videoToScreenNorm(face[234], videoW, videoH, canvasW, canvasH);
+      const fR = this.videoToScreenNorm(face[454], videoW, videoH, canvasW, canvasH);
+      const fDx = (fL.sx - fR.sx) * 2.0 * tanHalfFov * this.camera.aspect;
+      const fDy = (fL.sy - fR.sy) * 2.0 * tanHalfFov;
+      const fSpan = Math.sqrt(fDx * fDx + fDy * fDy);
+      if (fSpan > 0.04) {
+        faceDepthEst = THREE.MathUtils.clamp(0.148 / fSpan, 0.45, 3.8);
+      }
+    }
+
+    if (apparentSpan > 0.055) {
       let foreshorten = 1.0;
       if (poseWorld && poseWorld.length >= 33) {
         const wDx = poseWorld[11].x - poseWorld[12].x;
         const wDy = poseWorld[11].y - poseWorld[12].y;
         const proj2d = Math.sqrt(wDx * wDx + wDy * wDy);
         const full3d = Math.sqrt(proj2d * proj2d + Math.pow(poseWorld[11].z - poseWorld[12].z, 2));
-        if (full3d > 0.1) foreshorten = Math.max(proj2d / full3d, 0.35);
+        if (full3d > 0.1) foreshorten = Math.max(proj2d / full3d, 0.38);
       }
-      const rawDepth = THREE.MathUtils.clamp((this.metricShoulderWidth * foreshorten) / apparentSpan, 0.65, 4.5);
+      const shoulderDepth = THREE.MathUtils.clamp((this.metricShoulderWidth * foreshorten) / apparentSpan, 0.48, 4.5);
+      // En plan rapproché ou quand un bord d'épaule sort du cadre, stabilise la profondeur grâce à la largeur faciale
+      const shoulderClipped = sLNorm.x < 0.06 || sLNorm.x > 0.94 || sRNorm.x < 0.06 || sRNorm.x > 0.94;
+      const rawDepth =
+        faceDepthEst !== null
+          ? THREE.MathUtils.lerp(shoulderDepth, faceDepthEst, shoulderClipped ? 0.65 : 0.25)
+          : shoulderDepth;
       this.userDepth = this.depthFilter.filter(rawDepth, timestampSec);
+    } else if (faceDepthEst !== null) {
+      this.userDepth = this.depthFilter.filter(faceDepthEst, timestampSec);
+    }
+
+    // 2. Mesure largeur réelle du buste via masque de segmentation (verrouillage athlétique serré)
+    if (maskBuffer && maskW > 16 && maskH > 16) {
+      const chestNormY = THREE.MathUtils.clamp(((sLNorm.y + sRNorm.y) * 0.5) + 0.07, 0.1, 0.85);
+      const row = Math.min(maskH - 1, Math.max(0, Math.round(chestNormY * maskH)));
+      const rowOffset = row * maskW;
+      let minX = maskW;
+      let maxX = -1;
+      for (let x = 0; x < maskW; x++) {
+        if (maskBuffer[rowOffset + x] > 125) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+        }
+      }
+      const normBodySpan = (maxX - minX) / maskW;
+      const normShoulderSpan = Math.abs(sLNorm.x - sRNorm.x);
+      if (maxX > minX && normShoulderSpan > 0.08 && normBodySpan > normShoulderSpan * 0.85 && normBodySpan < normShoulderSpan * 1.75) {
+        const ratio = THREE.MathUtils.clamp(normBodySpan / (normShoulderSpan * 1.14), 0.96, 1.12);
+        this.silhouetteChestWidthFactor = this.torsoWidthRatioFilter.filter(ratio, timestampSec);
+      }
     }
 
     let worldChestZ = 0;
@@ -184,7 +240,7 @@ export class CalibrationEngine {
       if (poseWorld && poseWorld[i]) {
         zOffset = -(poseWorld[i].z - worldChestZ);
       } else {
-        zOffset = -(lm.z ?? 0) * this.userDepth * 0.55;
+        zOffset = -(lm.z ?? 0) * this.userDepth * 0.52;
       }
 
       const zCam = -this.userDepth + THREE.MathUtils.clamp(zOffset, -0.85, 0.85);
@@ -193,11 +249,11 @@ export class CalibrationEngine {
       this.poseBank.updatePoint(i, this._rawVec, vis, timestampSec);
     }
 
-    // Synthèse de hanches virtuelles si l'utilisateur est assis (hanches hors-champ)
+    // 3. Synthèse / stabilisation des hanches quand l'utilisateur est cadré au buste
     const hipLVis = poseNorm[23]?.visibility ?? 0;
     const hipRVis = poseNorm[24]?.visibility ?? 0;
-    const hipLInFrame = poseNorm[23] && poseNorm[23].y < 1.06 && hipLVis > 0.42;
-    const hipRInFrame = poseNorm[24] && poseNorm[24].y < 1.06 && hipRVis > 0.42;
+    const hipLInFrame = poseNorm[23] && poseNorm[23].y < 1.04 && hipLVis > 0.45;
+    const hipRInFrame = poseNorm[24] && poseNorm[24].y < 1.04 && hipRVis > 0.45;
 
     if (!hipLInFrame || !hipRInFrame) {
       const pSL = this.poseBank.points[11];
@@ -217,20 +273,21 @@ export class CalibrationEngine {
       }
 
       const hipCenter = this._vHipMid.copy(this._vShoulderMid).addScaledVector(this._tmpB, estTorsoH);
-      const halfHipW = sw * 0.34;
+      const halfHipW = sw * 0.35;
       this._virtualHipL.copy(hipCenter).addScaledVector(this._tmpA, halfHipW);
       this._virtualHipR.copy(hipCenter).addScaledVector(this._tmpA, -halfHipW);
 
       if (!hipLInFrame) {
-        this.poseBank.points[23].lerp(this._virtualHipL, 0.35);
-        this.poseBank.visibility[23] = 0.65;
+        this.poseBank.points[23].lerp(this._virtualHipL, 0.48);
+        this.poseBank.visibility[23] = 0.72;
       }
       if (!hipRInFrame) {
-        this.poseBank.points[24].lerp(this._virtualHipR, 0.35);
-        this.poseBank.visibility[24] = 0.65;
+        this.poseBank.points[24].lerp(this._virtualHipR, 0.48);
+        this.poseBank.visibility[24] = 0.72;
       }
     }
 
+    // 4. Verrouillage des mains directement sur les poignets filtrés (élimine le jeu poignet/avant-bras)
     this.hasLeftHand = this._updateHand(
       trackingResult.leftHandLandmarks,
       trackingResult.leftHandWorldLandmarks,
@@ -255,18 +312,28 @@ export class CalibrationEngine {
       timestampSec
     );
 
-    const face = trackingResult.faceLandmarks;
+    // 5. Ancrage crânien haute précision via FaceLandmarker (robuste même avec casque audio sur les oreilles)
     if (face && face.length >= 468) {
       this.hasFace = true;
-      const headZ = this.poseBank.points[0].z;
-      const faceScaleZ = this.metricShoulderWidth * 0.45;
+      const poseNoseZ = this.poseBank.points[0].z;
+      const shoulderMidZ = (this.poseBank.points[11].z + this.poseBank.points[12].z) * 0.5;
+      const poseHeadZ = THREE.MathUtils.clamp(poseNoseZ, shoulderMidZ - 0.16, shoulderMidZ + 0.24);
+
+      const faceScaleZ = this.metricShoulderWidth * 0.34;
       for (let k = 0; k < this._faceIndices.length; k++) {
         const idx = this._faceIndices[k];
         const flm = face[idx];
         const { sx, sy } = this.videoToScreenNorm(flm, videoW, videoH, canvasW, canvasH);
-        const zCam = headZ - (flm.z ?? 0) * faceScaleZ;
+        const zCam = poseHeadZ - (flm.z ?? 0) * faceScaleZ;
         this.unprojectToCameraSpace(sx, sy, zCam, this._rawVec);
         this.faceAnchorBank.updatePoint(k, this._rawVec, 1.0, timestampSec);
+      }
+
+      const rawFaceH = this.faceAnchorBank.points[0].distanceTo(this.faceAnchorBank.points[1]);
+      const rawFaceW = this.faceAnchorBank.points[2].distanceTo(this.faceAnchorBank.points[3]);
+      if (rawFaceH > 0.10 && rawFaceH < 0.36 && rawFaceW > 0.08 && rawFaceW < 0.28) {
+        this.calibratedHeadH = THREE.MathUtils.lerp(this.calibratedHeadH, rawFaceH, 0.10);
+        this.calibratedHeadW = THREE.MathUtils.lerp(this.calibratedHeadW, rawFaceW, 0.10);
       }
     } else {
       this.hasFace = false;
@@ -306,12 +373,21 @@ export class CalibrationEngine {
       if (handWorld && handWorld[i]) {
         zOffset = -(handWorld[i].z - wristWorldZ);
       } else {
-        zOffset = -(lm.z ?? 0) * 0.25;
+        zOffset = -(lm.z ?? 0) * 0.22;
       }
-      const zCam = wristZ + THREE.MathUtils.clamp(zOffset, -0.35, 0.35);
+      const zCam = wristZ + THREE.MathUtils.clamp(zOffset, -0.28, 0.28);
       this.unprojectToCameraSpace(sx, sy, zCam, this._rawVec);
       handBank.updatePoint(i, this._rawVec, 1.0, timestampSec);
     }
+
+    // Attache rigide du poignet du gantelet sur l'articulation poignet de l'avant-bras
+    this._handDelta.subVectors(poseWristPos, handBank.points[0]);
+    if (this._handDelta.lengthSq() < 0.08) {
+      for (let i = 0; i < 21; i++) {
+        handBank.points[i].addScaledVector(this._handDelta, 0.72);
+      }
+    }
+
     return true;
   }
 
