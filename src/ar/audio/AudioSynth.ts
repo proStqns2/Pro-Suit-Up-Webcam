@@ -23,10 +23,27 @@ export class AudioSynth {
     return this.enabled;
   }
 
+  private _triggerServoClack(startTime: number, pitchHz: number, gainAmt: number): void {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(pitchHz, startTime);
+    osc.frequency.exponentialRampToValueAtTime(pitchHz * 0.36, startTime + 0.08);
+    g.gain.setValueAtTime(0.001, startTime);
+    g.gain.linearRampToValueAtTime(gainAmt, startTime + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0008, startTime + 0.11);
+    osc.connect(g);
+    g.connect(this.ctx.destination);
+    osc.start(startTime);
+    osc.stop(startTime + 0.12);
+  }
+
   playSuitUp(): void {
     if (!this.enabled || !this.unlock() || !this.ctx) return;
     const now = this.ctx.currentTime;
 
+    // 1. Sub-bass ARC core power-up + turbine sweep across the 3.4s 3-stage assembly
     const osc1 = this.ctx.createOscillator();
     const osc2 = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -34,21 +51,23 @@ export class AudioSynth {
 
     osc1.type = 'sawtooth';
     osc2.type = 'triangle';
-    osc1.frequency.setValueAtTime(95, now);
-    osc1.frequency.exponentialRampToValueAtTime(520, now + 0.85);
-    osc1.frequency.exponentialRampToValueAtTime(220, now + 1.45);
+    osc1.frequency.setValueAtTime(75, now);
+    osc1.frequency.exponentialRampToValueAtTime(340, now + 1.4);
+    osc1.frequency.exponentialRampToValueAtTime(680, now + 2.8);
+    osc1.frequency.exponentialRampToValueAtTime(240, now + 3.45);
 
-    osc2.frequency.setValueAtTime(190, now);
-    osc2.frequency.exponentialRampToValueAtTime(1040, now + 0.9);
+    osc2.frequency.setValueAtTime(150, now);
+    osc2.frequency.exponentialRampToValueAtTime(920, now + 2.9);
 
     filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(320, now);
-    filter.frequency.exponentialRampToValueAtTime(2400, now + 0.9);
-    filter.Q.value = 3.2;
+    filter.frequency.setValueAtTime(280, now);
+    filter.frequency.exponentialRampToValueAtTime(2800, now + 2.4);
+    filter.Q.value = 3.0;
 
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.16, now + 0.15);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 1.55);
+    gain.gain.linearRampToValueAtTime(0.14, now + 0.25);
+    gain.gain.setValueAtTime(0.12, now + 2.6);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 3.5);
 
     osc1.connect(filter);
     osc2.connect(filter);
@@ -57,8 +76,23 @@ export class AudioSynth {
 
     osc1.start(now);
     osc2.start(now);
-    osc1.stop(now + 1.6);
-    osc2.stop(now + 1.6);
+    osc1.stop(now + 3.55);
+    osc2.stop(now + 3.55);
+
+    // 2. Staggered mechatronic plate lock clacks (Endoskeleton -> Torso/Arms -> Legs -> Gauntlets -> Faceplate seal)
+    const clackTimings = [
+      [0.45, 480, 0.08],
+      [0.85, 620, 0.09],
+      [1.25, 540, 0.10],
+      [1.68, 720, 0.11],
+      [2.12, 660, 0.11],
+      [2.58, 840, 0.12],
+      [3.08, 960, 0.13],
+      [3.28, 420, 0.15],
+    ];
+    for (const [offset, pitch, vol] of clackTimings) {
+      this._triggerServoClack(now + offset, pitch, vol);
+    }
   }
 
   playHelmetServo(opening: boolean): void {
@@ -68,17 +102,19 @@ export class AudioSynth {
     const gain = this.ctx.createGain();
 
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(opening ? 260 : 540, now);
-    osc.frequency.exponentialRampToValueAtTime(opening ? 620 : 210, now + 0.24);
+    osc.frequency.setValueAtTime(opening ? 260 : 580, now);
+    osc.frequency.exponentialRampToValueAtTime(opening ? 680 : 200, now + 0.26);
 
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.13, now + 0.04);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+    gain.gain.linearRampToValueAtTime(0.14, now + 0.04);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.30);
 
     osc.connect(gain);
     gain.connect(this.ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.3);
+    osc.stop(now + 0.32);
+
+    this._triggerServoClack(now + (opening ? 0.04 : 0.22), opening ? 760 : 440, 0.10);
   }
 
   playRepulsorCharge(): void {

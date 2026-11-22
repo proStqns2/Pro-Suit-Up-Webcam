@@ -3,10 +3,10 @@ import * as THREE from 'three';
 function createStudioEnvironmentScene(): THREE.Scene {
   const envScene = new THREE.Scene();
 
-  // Dark matte studio enclosure so dark steel & crimson reflections have deep rich contrast
+  // Dark high-contrast cinema studio shell so clearcoated cherry-crimson & brushed gold catch crisp reflections
   const shell = new THREE.Mesh(
-    new THREE.BoxGeometry(34, 34, 34),
-    new THREE.MeshBasicMaterial({ color: new THREE.Color(0.08, 0.095, 0.12), side: THREE.BackSide })
+    new THREE.BoxGeometry(36, 36, 36),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(0.05, 0.065, 0.09), side: THREE.BackSide })
   );
   envScene.add(shell);
 
@@ -26,13 +26,13 @@ function createStudioEnvironmentScene(): THREE.Scene {
     envScene.add(panel);
   };
 
-  // Controlled cinematic 3-point bounce cards (crisp metallic edge highlights without plastic washout)
-  addSoftbox(6.5, 3.8, [-3.5, 7.5, 4.5], 2.1, 0xfff3e6);
-  addSoftbox(7.2, 2.2, [4.5, 5.5, -5.8], 1.45, 0xdcf0ff);
-  addSoftbox(3.8, 7.8, [0.8, 2.5, 10.5], 1.35, 0xfff8f2);
-  addSoftbox(2.6, 5.5, [-10.0, 2.8, -2.0], 1.25, 0xe8f2ff);
-  addSoftbox(1.9, 6.8, [8.4, 1.4, 3.0], 1.75, 0xffd5a8);
-  addSoftbox(6.0, 6.0, [0.0, -7.5, 0.0], 0.28, 0x7084a8);
+  // Sharp architectural light-strips (MCU suit showcase reflections like Endgame / Stark Lab)
+  addSoftbox(8.5, 2.1, [-2.8, 8.2, 4.0], 2.75, 0xfff6ea); // Overhead warm key strip
+  addSoftbox(1.4, 9.0, [-8.5, 1.5, 4.8], 2.15, 0xfff0dd); // Left crisp vertical edge strip
+  addSoftbox(1.4, 9.0, [8.5, 1.5, 4.2], 2.25, 0xd8f0ff);  // Right cool cyan-silver edge strip
+  addSoftbox(9.5, 1.6, [0.0, 6.0, -7.2], 2.10, 0xbfe8ff); // High rim crown strip
+  addSoftbox(4.2, 4.2, [0.5, 1.8, 11.2], 1.15, 0xfffaf2); // Front subtle specular card
+  addSoftbox(8.0, 8.0, [0.0, -8.0, 0.0], 0.25, 0x3b4a62); // Subtle cool floor bounce
 
   return envScene;
 }
@@ -73,7 +73,7 @@ export class EnvLighting {
 
     this.pmrem = new THREE.PMREMGenerator(renderer);
     const studioScene = createStudioEnvironmentScene();
-    this.currentEnvRT = this.pmrem.fromScene(studioScene, 0.04);
+    this.currentEnvRT = this.pmrem.fromScene(studioScene, 0.03);
     this.scene.environment = this.currentEnvRT.texture;
     studioScene.traverse((obj) => {
       const mesh = obj as THREE.Mesh;
@@ -81,23 +81,22 @@ export class EnvLighting {
       if (mesh.material) (mesh.material as THREE.Material).dispose();
     });
 
-    // Cinema contrast lighting: deep shadows + warm key + cool rim edge
-    this.hemiLight = new THREE.HemisphereLight(0xdce8fa, 0x161b24, 0.72);
+    this.hemiLight = new THREE.HemisphereLight(0xdce8fa, 0x10151e, 0.68);
     this.scene.add(this.hemiLight);
 
-    this.keyLight = new THREE.DirectionalLight(0xfff1e0, 1.85);
-    this.keyLight.position.set(-1.3, 2.2, 2.4);
+    this.keyLight = new THREE.DirectionalLight(0xfff4e6, 2.15);
+    this.keyLight.position.set(-1.5, 2.5, 2.5);
     this.scene.add(this.keyLight);
 
-    this.fillLight = new THREE.DirectionalLight(0xc2dcf8, 0.72);
-    this.fillLight.position.set(1.8, 0.4, 1.4);
+    this.fillLight = new THREE.DirectionalLight(0xbcd8f8, 0.72);
+    this.fillLight.position.set(1.9, 0.5, 1.4);
     this.scene.add(this.fillLight);
 
-    this.rimLight = new THREE.DirectionalLight(0x9be9ff, 1.15);
-    this.rimLight.position.set(0.9, 1.5, -2.1);
+    this.rimLight = new THREE.DirectionalLight(0x9beeff, 1.45);
+    this.rimLight.position.set(0.9, 1.6, -2.2);
     this.scene.add(this.rimLight);
 
-    this.arcPointLight = new THREE.PointLight(0x66f0ff, 1.35, 1.45);
+    this.arcPointLight = new THREE.PointLight(0x66f2ff, 1.65, 1.55);
     this.scene.add(this.arcPointLight);
   }
 
@@ -174,16 +173,16 @@ export class EnvLighting {
 
     this.hemiLight.color.lerp(this._skyColor, 0.22);
     this.hemiLight.groundColor.lerp(this._groundColor, 0.22);
-    this.hemiLight.intensity = THREE.MathUtils.clamp(0.55 + this.lumaSummary * 0.55, 0.52, 1.05);
+    this.hemiLight.intensity = THREE.MathUtils.clamp(0.55 + this.lumaSummary * 0.52, 0.52, 1.02);
 
     const dirX = (hotX - 0.5) * 3.0;
     const dirY = (0.5 - hotY) * 2.5 + 0.8;
-    this._targetLightPos.set(dirX, dirY, 2.3);
+    this._targetLightPos.set(dirX, dirY, 2.4);
     this.keyLight.position.lerp(this._targetLightPos, 0.2);
 
-    this._targetLightColor.setRGB(hotR / 255, hotG / 255, hotB / 255).lerp(this._white, 0.62);
+    this._targetLightColor.setRGB(hotR / 255, hotG / 255, hotB / 255).lerp(this._white, 0.65);
     this.keyLight.color.lerp(this._targetLightColor, 0.2);
-    this.keyLight.intensity = THREE.MathUtils.clamp(1.4 + this.lumaSummary * 0.9, 1.35, 2.15);
+    this.keyLight.intensity = THREE.MathUtils.clamp(1.65 + this.lumaSummary * 0.9, 1.6, 2.4);
   }
 
   dispose(): void {

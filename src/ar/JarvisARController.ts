@@ -641,11 +641,11 @@ export class JarvisARController {
       this.tracking.maskWidth,
       this.tracking.maskHeight
     );
-    this.armorRig.update(this.calibration, dt, this.fitScale, timeSec);
+    this.armorRig.update(this.calibration, dt, this.fitScale, timeSec, this.suitProgress);
     this._evaluateGestures(dt, nowMs);
 
     if (this.suitAnimating) {
-      this.suitProgress = Math.min(1.0, this.suitProgress + dt * 0.62);
+      this.suitProgress = Math.min(1.0, this.suitProgress + dt * 0.29);
       if (this.suitProgress >= 1.0) this.suitAnimating = false;
     }
     this.stealthMix = THREE.MathUtils.damp(this.stealthMix, this.isStealth ? 1.0 : 0.0, 6.0, dt);

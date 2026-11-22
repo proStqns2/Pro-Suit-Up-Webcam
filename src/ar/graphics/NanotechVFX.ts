@@ -370,6 +370,17 @@ export class NanotechVFX {
       }
     }
 
+    if (suitProgress > 0.36 && suitProgress < 0.95 && Math.random() < 0.38) {
+      const lockAnchor =
+        suitProgress > 0.78
+          ? rig.headWorldPos
+          : Math.random() > 0.5
+            ? rig.shoulderWorldPos.left
+            : rig.shoulderWorldPos.right;
+      this._targetPt.set(0, 0.35, 1);
+      this._spawnSpark(lockAnchor, this._targetPt, 0.45);
+    }
+
     for (let i = 0; i < this.sparkCount; i++) {
       if (this.sparkLife[i] > 0) {
         this.sparkLife[i] -= dt;
