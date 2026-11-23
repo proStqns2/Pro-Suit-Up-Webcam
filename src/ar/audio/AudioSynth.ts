@@ -43,7 +43,7 @@ export class AudioSynth {
     if (!this.enabled || !this.unlock() || !this.ctx) return;
     const now = this.ctx.currentTime;
 
-    // 1. Sub-bass ARC core power-up + turbine sweep across the 3.4s 3-stage assembly
+    // 1. Hydraulique & réacteur ARC : montée de puissance mécanique grave sur 4.2s
     const osc1 = this.ctx.createOscillator();
     const osc2 = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
@@ -51,23 +51,23 @@ export class AudioSynth {
 
     osc1.type = 'sawtooth';
     osc2.type = 'triangle';
-    osc1.frequency.setValueAtTime(75, now);
-    osc1.frequency.exponentialRampToValueAtTime(340, now + 1.4);
-    osc1.frequency.exponentialRampToValueAtTime(680, now + 2.8);
-    osc1.frequency.exponentialRampToValueAtTime(240, now + 3.45);
+    osc1.frequency.setValueAtTime(58, now);
+    osc1.frequency.exponentialRampToValueAtTime(190, now + 1.6);
+    osc1.frequency.exponentialRampToValueAtTime(340, now + 3.4);
+    osc1.frequency.exponentialRampToValueAtTime(135, now + 4.15);
 
-    osc2.frequency.setValueAtTime(150, now);
-    osc2.frequency.exponentialRampToValueAtTime(920, now + 2.9);
+    osc2.frequency.setValueAtTime(110, now);
+    osc2.frequency.exponentialRampToValueAtTime(480, now + 3.6);
 
     filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(280, now);
-    filter.frequency.exponentialRampToValueAtTime(2800, now + 2.4);
-    filter.Q.value = 3.0;
+    filter.frequency.setValueAtTime(210, now);
+    filter.frequency.exponentialRampToValueAtTime(1950, now + 3.2);
+    filter.Q.value = 2.6;
 
     gain.gain.setValueAtTime(0.001, now);
-    gain.gain.linearRampToValueAtTime(0.14, now + 0.25);
-    gain.gain.setValueAtTime(0.12, now + 2.6);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 3.5);
+    gain.gain.linearRampToValueAtTime(0.11, now + 0.25);
+    gain.gain.setValueAtTime(0.09, now + 3.2);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 4.2);
 
     osc1.connect(filter);
     osc2.connect(filter);
@@ -76,19 +76,22 @@ export class AudioSynth {
 
     osc1.start(now);
     osc2.start(now);
-    osc1.stop(now + 3.55);
-    osc2.stop(now + 3.55);
+    osc1.stop(now + 4.25);
+    osc2.stop(now + 4.25);
 
-    // 2. Staggered mechatronic plate lock clacks (Endoskeleton -> Torso/Arms -> Legs -> Gauntlets -> Faceplate seal)
+    // 2. Claquements séquentiels d'arrimage Mark 42 (Bottes -> Jambes -> Bassin/Abdos -> Avant-bras/Gantelets -> Torse/Épaules -> Casque -> Visière)
     const clackTimings = [
-      [0.45, 480, 0.08],
-      [0.85, 620, 0.09],
-      [1.25, 540, 0.10],
-      [1.68, 720, 0.11],
-      [2.12, 660, 0.11],
-      [2.58, 840, 0.12],
-      [3.08, 960, 0.13],
-      [3.28, 420, 0.15],
+      [0.38, 320, 0.11],
+      [0.62, 360, 0.11],
+      [0.98, 440, 0.12],
+      [1.36, 480, 0.12],
+      [1.76, 560, 0.13],
+      [2.16, 640, 0.13],
+      [2.56, 710, 0.14],
+      [2.96, 520, 0.14],
+      [3.38, 820, 0.14],
+      [3.74, 920, 0.15],
+      [4.02, 390, 0.17],
     ];
     for (const [offset, pitch, vol] of clackTimings) {
       this._triggerServoClack(now + offset, pitch, vol);

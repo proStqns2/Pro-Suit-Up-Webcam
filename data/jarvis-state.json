@@ -5,7 +5,11 @@
     "bloomStrength": 0.62,
     "metricShoulderWidth": 0.4,
     "torsoAspectRatio": 1.38,
-    "updatedAt": "2026-11-22T15:18:26.310Z"
+    "waistWidthFactor": 0.98,
+    "armGirthFactor": 1.04,
+    "frontScanned": false,
+    "backScanned": false,
+    "updatedAt": "2026-11-23T17:56:36.346Z"
   },
   "telemetry": {
     "totalSessions": 0,

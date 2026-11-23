@@ -4,6 +4,12 @@ import { TrackingEngine } from './vision/TrackingEngine';
 import { DebugSkeleton } from './vision/DebugSkeleton';
 import { createMark85Materials, type Mark85MaterialLibrary } from './graphics/Mark85Materials';
 import { Mark85ArmorRig } from './graphics/Mark85ArmorRig';
+import {
+  ArmorSocketManager,
+  type ArmorSocketId,
+  type ArmorSocketStatus,
+  type CustomPartAttachOptions,
+} from './graphics/ArmorSockets';
 import { NanotechVFX } from './graphics/NanotechVFX';
 import { EnvLighting } from './graphics/EnvLighting';
 import { CinemaPostProcess } from './graphics/CinemaPostProcess';
@@ -15,6 +21,18 @@ import {
   type SuitPresetId,
   type TelemetrySummary,
 } from './types/SuitPreset';
+
+interface JarvisWindowBridge {
+  JARVIS_AR?: {
+    attachCustomPart: (
+      socketId: ArmorSocketId,
+      source: string | File,
+      options?: CustomPartAttachOptions
+    ) => Promise<void>;
+    detachCustomPart: (socketId: ArmorSocketId) => void;
+    listSockets: () => ArmorSocketStatus[];
+  };
+}
 
 export interface HudSnapshot {
   bootState: 'loading' | 'ready' | 'error';
@@ -29,6 +47,11 @@ export interface HudSnapshot {
   arcEnergy: number;
   calibReadout: string;
   calibrated: boolean;
+  scanProgress: number;
+  frontScanned: boolean;
+  backScanned: boolean;
+  isBackFacing: boolean;
+  suitStageLabel: string;
   luma: number;
   helmetOpen: boolean;
   mechaInspect: boolean;
@@ -45,7 +68,15 @@ export interface HudSnapshot {
   bloomEnabled: boolean;
   backendOnline: boolean;
   telemetrySummary: TelemetrySummary | null;
+  socketStatuses: ArmorSocketStatus[];
+  videoDevices: VideoDeviceOption[];
+  selectedVideoDeviceId: string;
   logs: string[];
+}
+
+export interface VideoDeviceOption {
+  deviceId: string;
+  label: string;
 }
 
 interface SpeechRecognitionAlternativeLike {
@@ -103,12 +134,16 @@ export class JarvisARController {
   private debugSkeleton: DebugSkeleton;
   private materials: Mark85MaterialLibrary;
   private armorRig: Mark85ArmorRig;
+  private socketManager: ArmorSocketManager;
   private vfx: NanotechVFX;
   private envLighting: EnvLighting;
   private audio: AudioSynth;
   private backend = new BackendClient();
 
   private stream: MediaStream | null = null;
+  private startSeq = 0;
+  private videoDevices: VideoDeviceOption[] = [];
+  private selectedVideoDeviceId = '';
   private recognition: SpeechRecognitionLike | null = null;
 
   private presets: SuitPreset[] = DEFAULT_SUIT_PRESETS;
@@ -120,6 +155,7 @@ export class JarvisARController {
   private pendingShotsTelemetry = 0;
   private telemetrySyncTimer = 0;
   private calibrationSavedOnLock = false;
+  private backScanSavedOnLock = false;
 
   private suitProgress = 0.0;
   private suitAnimating = false;
@@ -137,8 +173,8 @@ export class JarvisARController {
 
   private bootState: 'loading' | 'ready' | 'error' = 'loading';
   private bootProgress = 5;
-  private bootTitle = 'STARK INDUSTRIES — MK-85';
-  private bootMessage = 'Activation des capteurs optiques et post-traitement HDR...';
+  private bootTitle = 'STARK INDUSTRIES — MK-42 / MK-85';
+  private bootMessage = 'Activation des capteurs optiques 360° et rendu métallique ACES...';
   private systemState = 'INITIALISATION OPTIQUE...';
   private webcamStatus = 'ATTENTE';
   private holisticInfo = 'CHARGEMENT';
@@ -185,19 +221,38 @@ export class JarvisARController {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.12;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.shadowMap.enabled = !this.isSoftwareGl;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(48, window.innerWidth / Math.max(window.innerHeight, 1), 0.05, 30);
+    // Focale verticale 41° alignée sur l'optique réelle d'une webcam 16:9 (zéro déformation grand-angle)
+    this.camera = new THREE.PerspectiveCamera(41, window.innerWidth / Math.max(window.innerHeight, 1), 0.05, 30);
     this.camera.position.set(0, 0, 0);
 
     this.calibration = new CalibrationEngine(this.camera);
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     this.materials = createMark85Materials(maxAniso);
     this.armorRig = new Mark85ArmorRig(this.materials);
+    if (!this.isSoftwareGl) {
+      this.armorRig.root.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (
+          mesh.isMesh &&
+          mesh.material !== this.materials.depthOccluder &&
+          mesh.material !== this.materials.emissiveCyan &&
+          mesh.material !== this.materials.pulseGlow &&
+          (mesh.material as THREE.Material).colorWrite !== false
+        ) {
+          mesh.castShadow = true;
+          mesh.receiveShadow = true;
+        }
+      });
+    }
     this.scene.add(this.armorRig.root);
+    this.socketManager = new ArmorSocketManager(this.armorRig.getSocketEntries());
 
     this.vfx = new NanotechVFX(this.scene);
-    this.envLighting = new EnvLighting(this.renderer, this.scene);
+    this.envLighting = new EnvLighting(this.renderer, this.scene, this.isSoftwareGl);
     this.audio = new AudioSynth();
     this.tracking = new TrackingEngine();
     this.debugSkeleton = new DebugSkeleton(this.debugCanvas);
@@ -246,7 +301,56 @@ export class JarvisARController {
     this.webglCanvas.addEventListener('webglcontextlost', this._onContextLostBound);
     this.webglCanvas.addEventListener('webglcontextrestored', this._onContextRestoredBound);
 
+    (window as unknown as JarvisWindowBridge).JARVIS_AR = {
+      attachCustomPart: (socketId, source, options) => this.attachCustomPart(socketId, source, options),
+      detachCustomPart: (socketId) => this.detachCustomPart(socketId),
+      listSockets: () => this.getSocketStatuses(),
+    };
+
     void this._bootstrapBackend();
+    void this._loadSocketManifest();
+  }
+
+  private async _loadSocketManifest(): Promise<void> {
+    const count = await this.socketManager.loadManifest('/assets/suit-parts/manifest.json');
+    if (this.disposed) return;
+    if (count > 0) {
+      this.addLog(`${count} pièce(s) .GLB personnalisée(s) montée(s) depuis manifest.json.`);
+      this.emitSnapshot();
+    }
+  }
+
+  getSocketStatuses(): ArmorSocketStatus[] {
+    return this.socketManager.listStatuses();
+  }
+
+  async attachCustomPart(
+    socketId: ArmorSocketId,
+    source: string | File,
+    options?: CustomPartAttachOptions
+  ): Promise<void> {
+    await this.socketManager.attachCustomPart(socketId, source, options);
+    if (this.disposed) return;
+    const entry = this.armorRig.getSocketEntries().find((s) => s.id === socketId);
+    if (entry) {
+      entry.customRoot.traverse((obj) => {
+        const mesh = obj as THREE.Mesh;
+        if (mesh.isMesh) {
+          mesh.renderOrder = 2;
+          mesh.castShadow = !this.isSoftwareGl;
+          mesh.receiveShadow = !this.isSoftwareGl;
+        }
+      });
+    }
+    const label = entry?.customSourceName ?? 'modèle 3D';
+    this.addLog(`Pièce personnalisée montée sur [${socketId}] : ${label}`);
+    this.emitSnapshot();
+  }
+
+  detachCustomPart(socketId: ArmorSocketId): void {
+    this.socketManager.detachCustomPart(socketId);
+    this.addLog(`Socket [${socketId}] restauré sur le maillage mécatronique natif.`);
+    this.emitSnapshot();
   }
 
   private async _bootstrapBackend(): Promise<void> {
@@ -262,9 +366,13 @@ export class JarvisARController {
     this.fitScale = savedCal.fitScale;
     this.calibration.metricShoulderWidth = savedCal.metricShoulderWidth;
     this.calibration.torsoAspectRatio = savedCal.torsoAspectRatio;
+    this.calibration.waistWidthFactor = savedCal.waistWidthFactor;
+    this.calibration.armGirthFactor = savedCal.armGirthFactor;
+    this.calibration.frontScanned = savedCal.frontScanned;
+    this.calibration.backScanned = savedCal.backScanned;
     this.selectPreset(savedCal.selectedPresetId, false);
     if (this.backendOnline) {
-      this.addLog('Noyau serveur J.A.R.V.I.S. connecté (profil calibré restauré).');
+      this.addLog('Noyau serveur J.A.R.V.I.S. connecté (profil 360° restauré).');
     }
     this.emitSnapshot();
   }
@@ -299,6 +407,11 @@ export class JarvisARController {
       arcEnergy: this.arcEnergy,
       calibReadout: this.calibration.getCalibratedReadout(),
       calibrated: this.calibration.calibrated,
+      scanProgress: this.calibration.scanProgress,
+      frontScanned: this.calibration.frontScanned,
+      backScanned: this.calibration.backScanned,
+      isBackFacing: this.calibration.isBackFacing,
+      suitStageLabel: this.armorRig.activeStageLabel,
       luma: this.envLighting.lumaSummary,
       helmetOpen: this.armorRig.helmetOpenTarget > 0.5,
       mechaInspect: this.armorRig.mechaInspectTarget > 0.5,
@@ -315,6 +428,9 @@ export class JarvisARController {
       bloomEnabled: this.postProcess !== null,
       backendOnline: this.backendOnline,
       telemetrySummary: this.telemetrySummary,
+      socketStatuses: this.socketManager.listStatuses(),
+      videoDevices: this.videoDevices,
+      selectedVideoDeviceId: this.selectedVideoDeviceId,
       logs: this.logs,
     });
   }
@@ -344,62 +460,84 @@ export class JarvisARController {
     this.emitSnapshot();
   }
 
-  async start(): Promise<void> {
+  async start(preferredDeviceId?: string): Promise<void> {
+    const seq = ++this.startSeq;
+    const wasDemo = this.isDemoMode;
+
     this._stopLoop();
     this.isDemoMode = false;
     this.demoYawTarget = 0;
     this.tracking.demoYaw = 0;
     this.isDraggingYaw = false;
+    if (wasDemo) {
+      this.calibration.resetCalibration();
+    }
     this.calibrationSavedOnLock = false;
+    this.backScanSavedOnLock = false;
+
+    if (typeof preferredDeviceId === 'string') {
+      this.selectedVideoDeviceId = preferredDeviceId;
+    }
+
     this.bootState = 'loading';
-    this.bootTitle = 'STARK INDUSTRIES — MK-85';
-    this.bootProgress = 10;
-    this.bootMessage = 'Demande d’accès au flux webcam HD...';
+    this.bootTitle = 'STARK INDUSTRIES — MK-42 / MK-85';
+    this.bootProgress = 12;
+    this.bootMessage = 'Initialisation de la caméra HD...';
     this.emitSnapshot();
 
+    let webcamReady = false;
     try {
-      await this._startWebcam();
-      if (this.disposed) return;
+      await this._startWebcam(seq, this.selectedVideoDeviceId || undefined);
+      if (this.disposed || seq !== this.startSeq) return;
+      webcamReady = true;
 
-      this.webcamStatus = `${this.videoEl.videoWidth}x${this.videoEl.videoHeight}`;
+      this.webcamStatus = `${this.videoEl.videoWidth || 1280}x${this.videoEl.videoHeight || 720}`;
       await this.tracking.init((pct, msg) => {
-        if (this.disposed) return;
+        if (this.disposed || seq !== this.startSeq) return;
         this.bootProgress = pct;
         this.bootMessage = msg;
         this.emitSnapshot();
       });
-      if (this.disposed) return;
+      if (this.disposed || seq !== this.startSeq) return;
 
       this.holisticInfo = `${this.tracking.mode.toUpperCase()} (${this.tracking.delegate})`;
+      this.armorRig.helmetOpenTarget = 1;
       this.bootProgress = 100;
-      this.bootMessage = 'Systèmes tactiques prêts. Déploiement Nanotech...';
+      this.bootMessage = 'Systèmes tactiques prêts. Arrimage mécatronique Mark 42...';
       this.emitSnapshot();
 
       setTimeout(() => {
-        if (this.disposed) return;
+        if (this.disposed || seq !== this.startSeq) return;
         this.bootState = 'ready';
-        this.systemState = 'OPÉRATIONNEL — VERROUILLAGE BIOMÉTRIQUE';
-        this.addLog('J.A.R.V.I.S. en ligne. Calibrage automatique activé.');
+        this.systemState = 'OPÉRATIONNEL — SCAN 360° & VERROUILLAGE';
+        this.addLog('J.A.R.V.I.S. en ligne. Casque ouvert autour du visage ([H] pour sceller).');
         this.triggerSuitUp();
         this.emitSnapshot();
-      }, 360);
+      }, 320);
 
       this.lastFrameTime = performance.now();
       this._scheduleNextFrame();
     } catch (err) {
-      if (this.disposed) return;
+      if (this.disposed || seq !== this.startSeq) return;
+      this._stopWebcamStream();
       const error = err as Error;
-      this.webcamStatus = 'ERREUR';
-      this.systemState = 'DÉFAUT CAPTEUR OPTIQUE';
+      this.webcamStatus = webcamReady ? 'PAUSE' : 'ERREUR';
+      this.systemState = webcamReady ? 'DÉFAUT PIPELINE TRACKING' : 'DÉFAUT CAPTEUR OPTIQUE';
       this.bootState = 'error';
       this.bootProgress = 100;
-      this.bootTitle = 'CAPTEUR WEBCAM INDISPONIBLE';
-      this.bootMessage = this._formatWebcamError(error);
-      this.emitSnapshot();
+      this.bootTitle = webcamReady ? 'PIPELINE MEDIAPIPE INDISPONIBLE' : 'CAPTEUR WEBCAM INDISPONIBLE';
+      this.bootMessage = webcamReady
+        ? `Le suivi corporel n’a pas pu démarrer (${error.message || 'erreur WASM/GPU'}). Réessayez ou passez en Démo 3D.`
+        : this._formatWebcamError(error);
+      await this._refreshVideoDevices();
+      if (!this.disposed && seq === this.startSeq) {
+        this.emitSnapshot();
+      }
     }
   }
 
   startDemoMode(): void {
+    this.startSeq++;
     this._stopLoop();
     this._stopWebcamStream();
 
@@ -409,6 +547,7 @@ export class JarvisARController {
     this.isDraggingYaw = false;
     this.tracking.enableDemoMode();
     this.calibration.resetCalibration();
+    this.armorRig.helmetOpenTarget = 0;
 
     this.webcamStatus = 'SIMULATION 3D';
     this.holisticInfo = 'DEMO MK-85 (SIM-3D)';
@@ -423,46 +562,200 @@ export class JarvisARController {
     this._scheduleNextFrame();
   }
 
-  private async _startWebcam(): Promise<void> {
+  private async _refreshVideoDevices(): Promise<VideoDeviceOption[]> {
+    if (!navigator.mediaDevices?.enumerateDevices) return this.videoDevices;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices
+        .filter((d) => d.kind === 'videoinput')
+        .map((d, idx) => ({
+          deviceId: d.deviceId,
+          label: d.label.trim() || `Caméra ${idx + 1}`,
+        }));
+      this.videoDevices = cams;
+      return cams;
+    } catch {
+      return this.videoDevices;
+    }
+  }
+
+  private async _acquireStreamWithFallbacks(preferredDeviceId?: string): Promise<MediaStream> {
+    const candidates: MediaStreamConstraints[] = [];
+
+    if (preferredDeviceId) {
+      candidates.push({
+        audio: false,
+        video: {
+          deviceId: { exact: preferredDeviceId },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 },
+        },
+      });
+      candidates.push({
+        audio: false,
+        video: { deviceId: { exact: preferredDeviceId } },
+      });
+    }
+
+    // Contraintes souples sans min-FPS bloquant ni facingMode strict
+    candidates.push({
+      audio: false,
+      video: {
+        facingMode: { ideal: 'user' },
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 30 },
+      },
+    });
+    candidates.push({
+      audio: false,
+      video: {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+      },
+    });
+    candidates.push({ audio: false, video: true });
+
+    let lastErr: unknown = null;
+    for (let i = 0; i < candidates.length; i++) {
+      try {
+        return await navigator.mediaDevices.getUserMedia(candidates[i]);
+      } catch (err) {
+        lastErr = err;
+        const name = (err as Error)?.name;
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+          throw err;
+        }
+        if (name === 'NotReadableError' || name === 'AbortError') {
+          await new Promise((r) => setTimeout(r, 180));
+        }
+      }
+    }
+
+    // Dernier recours : tester chaque caméra physique détectée (évite une caméra virtuelle bloquée en #0)
+    const cams = await this._refreshVideoDevices();
+    for (const cam of cams) {
+      if (!cam.deviceId || cam.deviceId === preferredDeviceId) continue;
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: { deviceId: { exact: cam.deviceId } },
+        });
+      } catch (err) {
+        lastErr = err;
+        const name = (err as Error)?.name;
+        if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+          throw err;
+        }
+      }
+    }
+
+    throw lastErr instanceof Error ? lastErr : new Error('Impossible d’ouvrir le flux vidéo.');
+  }
+
+  private async _startWebcam(seq: number, preferredDeviceId?: string): Promise<void> {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('WebRTC getUserMedia non supporté par ce navigateur (HTTPS ou localhost requis).');
     }
+
+    const hadActiveStream = Boolean(this.stream);
     this._stopWebcamStream();
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        facingMode: 'user',
-        width: { ideal: 1280 },
-        height: { ideal: 720 },
-        frameRate: { ideal: 60, min: 24 },
-      },
-    });
+    if (hadActiveStream) {
+      // Laisse le pilote matériel libérer la webcam avant réouverture
+      await new Promise((r) => setTimeout(r, 120));
+    }
+    if (this.disposed || seq !== this.startSeq) return;
+
+    const stream = await this._acquireStreamWithFallbacks(preferredDeviceId);
+    if (this.disposed || seq !== this.startSeq) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack) {
+      const settings = videoTrack.getSettings?.();
+      if (settings?.deviceId) {
+        this.selectedVideoDeviceId = settings.deviceId;
+      }
+      videoTrack.onended = () => {
+        if (this.disposed || seq !== this.startSeq || this.isDemoMode) return;
+        this.addLog('Flux webcam interrompu par le système.');
+        this.webcamStatus = 'COUPÉE';
+        this.bootState = 'error';
+        this.bootTitle = 'CAMÉRA DÉCONNECTÉE';
+        this.bootMessage = 'Le signal vidéo a été interrompu. Vérifiez votre webcam puis cliquez sur Réactiver.';
+        this.emitSnapshot();
+      };
+    }
+
     this.stream = stream;
+    this.videoEl.muted = true;
+    this.videoEl.playsInline = true;
+    this.videoEl.setAttribute('playsinline', 'true');
     this.videoEl.srcObject = stream;
+
     await new Promise<void>((resolve) => {
-      if (this.videoEl.readyState >= 1) resolve();
-      else this.videoEl.onloadedmetadata = () => resolve();
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        this.videoEl.removeEventListener('loadedmetadata', checkReady);
+        this.videoEl.removeEventListener('loadeddata', checkReady);
+        resolve();
+      };
+      const checkReady = () => {
+        if (this.videoEl.readyState >= 1 && this.videoEl.videoWidth > 0) done();
+      };
+      const timer = window.setTimeout(done, 3500);
+      this.videoEl.addEventListener('loadedmetadata', checkReady);
+      this.videoEl.addEventListener('loadeddata', checkReady);
+      checkReady();
     });
-    await this.videoEl.play();
+
+    if (this.disposed || seq !== this.startSeq) return;
+
+    try {
+      await this.videoEl.play();
+    } catch (playErr) {
+      const errName = (playErr as Error)?.name;
+      if (errName !== 'AbortError') {
+        throw playErr;
+      }
+    }
+
+    await this._refreshVideoDevices();
   }
 
   private _stopWebcamStream(): void {
     if (this.stream) {
-      this.stream.getTracks().forEach((track) => track.stop());
+      this.stream.getTracks().forEach((track) => {
+        track.onended = null;
+        track.stop();
+      });
       this.stream = null;
     }
+    this.videoEl.pause();
     this.videoEl.srcObject = null;
   }
 
   private _formatWebcamError(err: Error): string {
-    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-      return 'Permission webcam refusée. Autorisez l’accès caméra ou lancez la simulation 3D sans webcam.';
+    const inIframe = typeof window !== 'undefined' && window.self !== window.top;
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.name === 'SecurityError') {
+      return inIframe
+        ? 'Accès caméra bloqué dans l’aperçu. Autorisez la caméra dans la barre d’adresse (icône cadenas/caméra) ou ouvrez l’app dans un nouvel onglet.'
+        : 'Permission webcam refusée. Autorisez la caméra dans votre navigateur puis cliquez sur Réactiver la webcam.';
     }
     if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-      return 'Aucune caméra détectée sur ce poste. Vous pouvez explorer l’armure en mode Démo 3D.';
+      return 'Aucune caméra détectée sur ce poste. Branchez une webcam ou lancez le mode Démo 3D.';
     }
-    if (err.name === 'NotReadableError') {
-      return 'La webcam est déjà utilisée par une autre application.';
+    if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      return 'La webcam est occupée ou verrouillée par une autre application (ou une caméra virtuelle). Fermez-la ou sélectionnez une autre caméra ci-dessous.';
+    }
+    if (err.name === 'OverconstrainedError') {
+      return 'Résolution non supportée par ce capteur. Sélectionnez une autre caméra ou cliquez sur Réactiver la webcam.';
     }
     return err.message || 'Erreur lors de l’initialisation optique AR.';
   }
@@ -472,7 +765,7 @@ export class JarvisARController {
     this.suitAnimating = true;
     this.pendingSuitUpTelemetry += 1;
     this.audio.playSuitUp();
-    this.addLog('Séquence Nanotech Suit-Up lancée depuis le réacteur ARC.');
+    this.addLog('Séquence mécatronique Mark 42 : arrimage modulaire pièce par pièce.');
     this.emitSnapshot();
   }
 
@@ -515,7 +808,8 @@ export class JarvisARController {
   resetCalibration(): void {
     this.calibration.resetCalibration();
     this.calibrationSavedOnLock = false;
-    this.addLog('Recalibrage morphologique lancé...');
+    this.backScanSavedOnLock = false;
+    this.addLog('Scan corporel 360° (avant puis arrière) réinitialisé...');
     this.emitSnapshot();
   }
 
@@ -611,7 +905,7 @@ export class JarvisARController {
     else if (key === 'v') this.toggleVoiceControl();
     else if (key === 'c') this.resetCalibration();
     else if (key === '1') this.selectPreset('MK85_ENDGAME');
-    else if (key === '2') this.selectPreset('MK85_LAB_PROTO');
+    else if (key === '2') this.selectPreset('MK42_PRODIGAL_SON');
     else if (key === '3') this.selectPreset('MK85_STEALTH_OPS');
     else if (key === '4') this.selectPreset('MK85_BATTLE_DAMAGED');
     else if (key === '[' || key === '-') this.adjustFitScale(-0.05);
@@ -733,6 +1027,18 @@ export class JarvisARController {
       void this.backend.saveCalibration({
         metricShoulderWidth: Number(this.calibration.metricShoulderWidth.toFixed(3)),
         torsoAspectRatio: Number(this.calibration.torsoAspectRatio.toFixed(3)),
+        waistWidthFactor: Number(this.calibration.waistWidthFactor.toFixed(3)),
+        armGirthFactor: Number(this.calibration.armGirthFactor.toFixed(3)),
+        frontScanned: this.calibration.frontScanned,
+        backScanned: this.calibration.backScanned,
+      });
+    }
+    if (!this.isDemoMode && this.calibration.backScanned && !this.backScanSavedOnLock) {
+      this.backScanSavedOnLock = true;
+      this.addLog('Scan dorsal 360° verrouillé sur la carapace arrière.');
+      void this.backend.saveCalibration({
+        backScanned: true,
+        frontScanned: this.calibration.frontScanned,
       });
     }
 
@@ -740,7 +1046,7 @@ export class JarvisARController {
     this._evaluateGestures(dt, nowMs);
 
     if (this.suitAnimating) {
-      this.suitProgress = Math.min(1.0, this.suitProgress + dt * 0.29);
+      this.suitProgress = Math.min(1.0, this.suitProgress + dt * 0.24);
       if (this.suitProgress >= 1.0) this.suitAnimating = false;
     }
     this.stealthMix = THREE.MathUtils.damp(this.stealthMix, this.isStealth ? 1.0 : 0.0, 6.0, dt);
@@ -766,8 +1072,9 @@ export class JarvisARController {
       nowMs,
       this.isDemoMode
     );
+    const scanActive = !this.isDemoMode && !this.calibration.calibrated;
     this.vfx.updateSegmentationMask(this.tracking, this.calibration.isMirrored);
-    this.vfx.update(dt, timeSec, this.armorRig, this.suitProgress, this.isStealth);
+    this.vfx.update(dt, timeSec, this.armorRig, this.suitProgress, this.isStealth, scanActive);
 
     this.debugSkeleton.draw(trackRes, this.calibration, videoW, videoH);
 
@@ -811,6 +1118,7 @@ export class JarvisARController {
 
   dispose(): void {
     this.disposed = true;
+    this.startSeq++;
     this._stopLoop();
     window.removeEventListener('resize', this._onResizeBound);
     window.removeEventListener('keydown', this._onKeyDownBound);
@@ -827,7 +1135,9 @@ export class JarvisARController {
       this.recognition = null;
     }
     this._stopWebcamStream();
+    delete (window as unknown as JarvisWindowBridge).JARVIS_AR;
     this.tracking.dispose();
+    this.socketManager.dispose();
     this.armorRig.dispose();
     this.materials.dispose();
     this.vfx.dispose();

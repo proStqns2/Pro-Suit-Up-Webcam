@@ -10,8 +10,8 @@ function createGlowSpriteTexture(): THREE.CanvasTexture {
   const ctx = c.getContext('2d')!;
   const grad = ctx.createRadialGradient(size / 2, size / 2, 2, size / 2, size / 2, size / 2);
   grad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)');
-  grad.addColorStop(0.22, 'rgba(130, 245, 255, 0.92)');
-  grad.addColorStop(0.55, 'rgba(30, 185, 255, 0.35)');
+  grad.addColorStop(0.24, 'rgba(185, 245, 255, 0.88)');
+  grad.addColorStop(0.58, 'rgba(60, 195, 255, 0.30)');
   grad.addColorStop(1.0, 'rgba(0, 80, 160, 0.0)');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
@@ -20,31 +20,19 @@ function createGlowSpriteTexture(): THREE.CanvasTexture {
   return tex;
 }
 
-function createHexParticleTexture(): THREE.CanvasTexture {
+function createSparkSpriteTexture(): THREE.CanvasTexture {
   const size = 64;
   const c = document.createElement('canvas');
   c.width = size;
   c.height = size;
   const ctx = c.getContext('2d')!;
-  const cx = size / 2;
-  const cy = size / 2;
-  const r = size * 0.38;
-
-  ctx.beginPath();
-  for (let i = 0; i < 6; i++) {
-    const a = (i * Math.PI) / 3 - Math.PI / 6;
-    const x = cx + Math.cos(a) * r;
-    const y = cy + Math.sin(a) * r;
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.fillStyle = 'rgba(140, 252, 255, 0.85)';
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = '#ffffff';
-  ctx.stroke();
-
+  const grad = ctx.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size / 2);
+  grad.addColorStop(0.0, 'rgba(255, 255, 255, 1.0)');
+  grad.addColorStop(0.28, 'rgba(255, 214, 120, 0.95)');
+  grad.addColorStop(0.65, 'rgba(255, 132, 32, 0.42)');
+  grad.addColorStop(1.0, 'rgba(255, 90, 0, 0.0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -55,22 +43,23 @@ interface RepulsorFX {
   beam: THREE.Mesh;
 }
 
+/**
+ * VFX Mécatronique Mark 42 / Mark 85 :
+ * - Aucune particule ou grille hologramme nanotech.
+ * - Étincelles d'impact métal chaud (ambre/or) aux points d'arrimage mécanique pendant le Suit-Up.
+ * - Balayage biométrique discret uniquement pendant le scan corporel actif [C].
+ * - Faisceau & noyau répulseur palmaire réaliste.
+ */
 export class NanotechVFX {
   private scene: THREE.Scene;
   private glowTex: THREE.CanvasTexture;
-  private hexTex: THREE.CanvasTexture;
+  private sparkTex: THREE.CanvasTexture;
 
   private arcSprite: THREE.Sprite;
   private repulsorSprites: { left: RepulsorFX; right: RepulsorFX };
   private blastPulses = { left: 0, right: 0 };
 
-  private nanoCount = 160;
-  private nanoPositions: Float32Array;
-  private nanoVelocities: Float32Array;
-  private nanoLives: Float32Array;
-  private nanoPoints: THREE.Points;
-
-  private sparkCount = 90;
+  private sparkCount = 120;
   private sparkPos: Float32Array;
   private sparkVel: Float32Array;
   private sparkLife: Float32Array;
@@ -93,14 +82,14 @@ export class NanotechVFX {
   constructor(scene: THREE.Scene) {
     this.scene = scene;
     this.glowTex = createGlowSpriteTexture();
-    this.hexTex = createHexParticleTexture();
+    this.sparkTex = createSparkSpriteTexture();
 
     this.arcSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.glowTex,
-        color: 0x6ef6ff,
+        color: 0xbef9ff,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.65,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
@@ -112,41 +101,21 @@ export class NanotechVFX {
       right: this._makeRepulsorFX(),
     };
 
-    this.nanoPositions = new Float32Array(this.nanoCount * 3);
-    this.nanoVelocities = new Float32Array(this.nanoCount * 3);
-    this.nanoLives = new Float32Array(this.nanoCount);
-
-    const nanoGeo = new THREE.BufferGeometry();
-    nanoGeo.setAttribute('position', new THREE.BufferAttribute(this.nanoPositions, 3));
-    this.nanoPoints = new THREE.Points(
-      nanoGeo,
-      new THREE.PointsMaterial({
-        map: this.hexTex,
-        color: 0x4bf4ff,
-        size: 0.042,
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        sizeAttenuation: true,
-      })
-    );
-    this.nanoPoints.frustumCulled = false;
-    this.scene.add(this.nanoPoints);
-
+    // Étincelles mécaniques ambre/or (verrouillage plaques Mark 42 + répulseur)
     this.sparkPos = new Float32Array(this.sparkCount * 3);
     this.sparkVel = new Float32Array(this.sparkCount * 3);
     this.sparkLife = new Float32Array(this.sparkCount);
+    this.sparkPos.fill(999);
     const sparkGeo = new THREE.BufferGeometry();
     sparkGeo.setAttribute('position', new THREE.BufferAttribute(this.sparkPos, 3));
     this.sparkPoints = new THREE.Points(
       sparkGeo,
       new THREE.PointsMaterial({
-        map: this.glowTex,
-        color: 0x9ef9ff,
-        size: 0.055,
+        map: this.sparkTex,
+        color: 0xffd07a,
+        size: 0.048,
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.96,
         blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
@@ -154,6 +123,7 @@ export class NanotechVFX {
     this.sparkPoints.frustumCulled = false;
     this.scene.add(this.sparkPoints);
 
+    // Calibre biométrique neutre actif uniquement pendant l'acquisition scan corporel 360°
     this.segUniforms = {
       uMask: { value: null },
       uHasMask: { value: 0.0 },
@@ -161,7 +131,7 @@ export class NanotechVFX {
       uIntensity: { value: 0.0 },
       uMirrored: { value: 1.0 },
       uTexel: { value: new THREE.Vector2(1 / 256, 1 / 144) },
-      uColor: { value: new THREE.Color(0x38f2ff) },
+      uColor: { value: new THREE.Color(0xd8e8f8) },
     };
 
     const segMat = new THREE.ShaderMaterial({
@@ -198,9 +168,9 @@ export class NanotechVFX {
           float u = texture2D(uMask, uv + vec2(0.0, uTexel.y)).r;
           float d = texture2D(uMask, uv - vec2(0.0, uTexel.y)).r;
 
-          float edge = clamp((abs(l - r) + abs(u - d)) * 2.8, 0.0, 1.0);
-          float scan = pow(0.5 + 0.5 * sin(vUv.y * 110.0 - uTime * 14.0), 4.0) * smoothstep(0.4, 0.85, c);
-          float alpha = (edge * 0.95 + scan * 0.25) * uIntensity;
+          float edge = clamp((abs(l - r) + abs(u - d)) * 2.2, 0.0, 1.0);
+          float bar = exp(-pow(fract(vUv.y - uTime * 0.45) - 0.5, 2.0) * 180.0) * smoothstep(0.45, 0.85, c);
+          float alpha = (edge * 0.42 + bar * 0.35) * uIntensity;
           if (alpha < 0.01) discard;
           gl_FragColor = vec4(uColor, alpha);
         }
@@ -216,7 +186,7 @@ export class NanotechVFX {
     const sprite = new THREE.Sprite(
       new THREE.SpriteMaterial({
         map: this.glowTex,
-        color: 0xaafaff,
+        color: 0xcffbff,
         transparent: true,
         opacity: 0,
         blending: THREE.AdditiveBlending,
@@ -225,13 +195,13 @@ export class NanotechVFX {
     );
     this.scene.add(sprite);
 
-    const beamGeo = new THREE.ConeGeometry(0.08, 1.35, 14, 1, true);
+    const beamGeo = new THREE.ConeGeometry(0.075, 1.35, 14, 1, true);
     beamGeo.translate(0, 0.675, 0);
     beamGeo.rotateX(Math.PI * 0.5);
     const beam = new THREE.Mesh(
       beamGeo,
       new THREE.MeshBasicMaterial({
-        color: 0x80f6ff,
+        color: 0xa6f8ff,
         transparent: true,
         opacity: 0,
         blending: THREE.AdditiveBlending,
@@ -273,12 +243,20 @@ export class NanotechVFX {
     this.segTexture.needsUpdate = true;
   }
 
-  update(dt: number, time: number, rig: Mark85ArmorRig, suitProgress: number, isStealth: boolean): void {
+  update(
+    dt: number,
+    time: number,
+    rig: Mark85ArmorRig,
+    suitProgress: number,
+    isStealth: boolean,
+    scanActive = false
+  ): void {
     this.segUniforms.uTime.value = time;
-    this.segUniforms.uColor.value.setHex(isStealth ? 0x2cf59c : 0x38f2ff);
+    this.segUniforms.uColor.value.setHex(isStealth ? 0x2cf59c : 0xd0e6f8);
 
-    const targetSegGlow = suitProgress < 0.98 ? Math.sin(suitProgress * Math.PI) * 0.85 : 0.08;
-    this.segUniforms.uIntensity.value = THREE.MathUtils.lerp(this.segUniforms.uIntensity.value, targetSegGlow, 0.15);
+    // Pas de contour nanotech cyan : discret balayage uniquement pendant le scan [C]
+    const targetSegGlow = scanActive ? 0.42 : 0.0;
+    this.segUniforms.uIntensity.value = THREE.MathUtils.lerp(this.segUniforms.uIntensity.value, targetSegGlow, 0.14);
 
     if (!rig.root.visible) {
       this.arcSprite.visible = false;
@@ -287,56 +265,22 @@ export class NanotechVFX {
       return;
     }
 
-    const arcScale = rig.mats.sharedUniforms.uBodyScale.value * 0.42;
-    this.arcSprite.visible = suitProgress > 0.06;
-    this.arcSprite.position.copy(rig.arcWorldPos);
-    const arcPulse = 1.0 + 0.06 * Math.sin(time * 9.0);
-    this.arcSprite.scale.setScalar(arcScale * arcPulse);
-    this.arcSprite.material.opacity = Math.min(suitProgress * 1.4, 0.72) * (isStealth ? 0.35 : 0.85);
-
-    const spawning = suitProgress > 0.02 && suitProgress < 0.97;
     const bodyScale = rig.mats.sharedUniforms.uBodyScale.value;
+    const arcScale = bodyScale * 0.36;
+    // Le réacteur s'allume au verrouillage du bloc pectoral (stage torse >= 0.56)
+    this.arcSprite.visible = suitProgress > 0.56;
+    this.arcSprite.position.copy(rig.arcWorldPos);
+    const arcPulse = 1.0 + 0.04 * Math.sin(time * 8.0);
+    this.arcSprite.scale.setScalar(arcScale * arcPulse);
+    this.arcSprite.material.opacity =
+      THREE.MathUtils.clamp((suitProgress - 0.56) * 3.0, 0, 1) * (isStealth ? 0.25 : 0.62);
 
-    for (let i = 0; i < this.nanoCount; i++) {
-      if (this.nanoLives[i] <= 0) {
-        if (spawning && Math.random() < 0.45) {
-          const branch = i % 5;
-          const anchor =
-            branch === 0
-              ? rig.headWorldPos
-              : branch === 1
-                ? rig.shoulderWorldPos.left
-                : branch === 2
-                  ? rig.shoulderWorldPos.right
-                  : branch === 3
-                    ? rig.palmWorldPos.left
-                    : rig.palmWorldPos.right;
-
-          const swarmT = THREE.MathUtils.clamp(suitProgress * 1.15 - Math.random() * 0.25, 0, 1);
-          const ox = THREE.MathUtils.lerp(rig.arcWorldPos.x, anchor.x, swarmT);
-          const oy = THREE.MathUtils.lerp(rig.arcWorldPos.y, anchor.y, swarmT);
-          const oz = THREE.MathUtils.lerp(rig.arcWorldPos.z, anchor.z, swarmT);
-
-          const jitter = bodyScale * 0.16;
-          this.nanoPositions[i * 3] = ox + (Math.random() - 0.5) * jitter;
-          this.nanoPositions[i * 3 + 1] = oy + (Math.random() - 0.5) * jitter;
-          this.nanoPositions[i * 3 + 2] = oz + (Math.random() - 0.5) * jitter;
-
-          this.nanoVelocities[i * 3] = (anchor.x - ox) * 1.4 + (Math.random() - 0.5) * 0.22;
-          this.nanoVelocities[i * 3 + 1] = (anchor.y - oy) * 1.4 + (Math.random() - 0.5) * 0.22;
-          this.nanoVelocities[i * 3 + 2] = (anchor.z - oz) * 1.4 + (Math.random() - 0.5) * 0.18;
-          this.nanoLives[i] = 0.28 + Math.random() * 0.28;
-        } else {
-          this.nanoPositions[i * 3 + 2] = 999;
-        }
-      } else {
-        this.nanoLives[i] -= dt;
-        this.nanoPositions[i * 3] += this.nanoVelocities[i * 3] * dt;
-        this.nanoPositions[i * 3 + 1] += this.nanoVelocities[i * 3 + 1] * dt;
-        this.nanoPositions[i * 3 + 2] += this.nanoVelocities[i * 3 + 2] * dt;
-      }
+    // Étincelles d'impact mécanique Mark 42 sur la partie en cours d'arrimage
+    if (suitProgress > 0.08 && suitProgress < 0.98 && Math.random() < 0.55) {
+      const lockAnchor = rig.activeClampAnchor;
+      this._targetPt.set((Math.random() - 0.5) * 0.4, 0.45, (Math.random() - 0.5) * 0.4);
+      this._spawnSpark(lockAnchor, this._targetPt, 0.65);
     }
-    (this.nanoPoints.geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
 
     for (const side of ['left', 'right'] as const) {
       const fx = this.repulsorSprites[side];
@@ -345,10 +289,10 @@ export class NanotechVFX {
       const blast = this.blastPulses[side];
       const energy = Math.min(1.4, charge + blast * 1.2);
 
-      if (energy > 0.04 && suitProgress > 0.6) {
+      if (energy > 0.04 && suitProgress > 0.58) {
         fx.sprite.visible = true;
         fx.sprite.position.copy(rig.palmWorldPos[side]);
-        const s = bodyScale * (0.38 + energy * 0.48) * (1.0 + 0.1 * Math.sin(time * 28.0));
+        const s = bodyScale * (0.36 + energy * 0.46) * (1.0 + 0.08 * Math.sin(time * 26.0));
         fx.sprite.scale.setScalar(s);
         fx.sprite.material.opacity = Math.min(0.95, energy * 0.85);
 
@@ -361,8 +305,8 @@ export class NanotechVFX {
           (fx.beam.material as THREE.MeshBasicMaterial).opacity = blast * 0.78;
         }
 
-        if (Math.random() < 0.75) {
-          this._spawnSpark(rig.palmWorldPos[side], rig.palmWorldNormal[side], blast > 0.2 ? 2.2 : 0.7);
+        if (blast > 0.15 && Math.random() < 0.7) {
+          this._spawnSpark(rig.palmWorldPos[side], rig.palmWorldNormal[side], 2.0);
         }
       } else {
         fx.sprite.visible = false;
@@ -370,20 +314,10 @@ export class NanotechVFX {
       }
     }
 
-    if (suitProgress > 0.36 && suitProgress < 0.95 && Math.random() < 0.38) {
-      const lockAnchor =
-        suitProgress > 0.78
-          ? rig.headWorldPos
-          : Math.random() > 0.5
-            ? rig.shoulderWorldPos.left
-            : rig.shoulderWorldPos.right;
-      this._targetPt.set(0, 0.35, 1);
-      this._spawnSpark(lockAnchor, this._targetPt, 0.45);
-    }
-
     for (let i = 0; i < this.sparkCount; i++) {
       if (this.sparkLife[i] > 0) {
         this.sparkLife[i] -= dt;
+        this.sparkVel[i * 3 + 1] -= 2.8 * dt;
         this.sparkPos[i * 3] += this.sparkVel[i * 3] * dt;
         this.sparkPos[i * 3 + 1] += this.sparkVel[i * 3 + 1] * dt;
         this.sparkPos[i * 3 + 2] += this.sparkVel[i * 3 + 2] * dt;
@@ -397,13 +331,13 @@ export class NanotechVFX {
   private _spawnSpark(origin: THREE.Vector3, normal: THREE.Vector3, speed: number): void {
     for (let i = 0; i < this.sparkCount; i++) {
       if (this.sparkLife[i] <= 0) {
-        this.sparkPos[i * 3] = origin.x + (Math.random() - 0.5) * 0.03;
-        this.sparkPos[i * 3 + 1] = origin.y + (Math.random() - 0.5) * 0.03;
-        this.sparkPos[i * 3 + 2] = origin.z + (Math.random() - 0.5) * 0.03;
-        this.sparkVel[i * 3] = normal.x * speed + (Math.random() - 0.5) * 0.5;
-        this.sparkVel[i * 3 + 1] = normal.y * speed + (Math.random() - 0.5) * 0.5;
-        this.sparkVel[i * 3 + 2] = normal.z * speed + (Math.random() - 0.5) * 0.5;
-        this.sparkLife[i] = 0.2 + Math.random() * 0.25;
+        this.sparkPos[i * 3] = origin.x + (Math.random() - 0.5) * 0.035;
+        this.sparkPos[i * 3 + 1] = origin.y + (Math.random() - 0.5) * 0.035;
+        this.sparkPos[i * 3 + 2] = origin.z + (Math.random() - 0.5) * 0.035;
+        this.sparkVel[i * 3] = normal.x * speed + (Math.random() - 0.5) * 0.85;
+        this.sparkVel[i * 3 + 1] = normal.y * speed + (Math.random() - 0.5) * 0.85;
+        this.sparkVel[i * 3 + 2] = normal.z * speed + (Math.random() - 0.5) * 0.85;
+        this.sparkLife[i] = 0.16 + Math.random() * 0.22;
         break;
       }
     }
@@ -411,10 +345,8 @@ export class NanotechVFX {
 
   dispose(): void {
     this.glowTex.dispose();
-    this.hexTex.dispose();
+    this.sparkTex.dispose();
     this.segTexture?.dispose();
-    this.nanoPoints.geometry.dispose();
-    (this.nanoPoints.material as THREE.Material).dispose();
     this.sparkPoints.geometry.dispose();
     (this.sparkPoints.material as THREE.Material).dispose();
     this.segQuad.geometry.dispose();

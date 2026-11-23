@@ -297,6 +297,47 @@ function createCarbonHexMeshMap(maxAnisotropy: number) {
   return map;
 }
 
+function createBellowsRibMaps(maxAnisotropy: number) {
+  const size = 256;
+  const col = document.createElement('canvas');
+  col.width = size;
+  col.height = size;
+  const cCtx = col.getContext('2d')!;
+
+  const bump = document.createElement('canvas');
+  bump.width = size;
+  bump.height = size;
+  const bCtx = bump.getContext('2d')!;
+
+  const grad = cCtx.createLinearGradient(0, 0, 0, size);
+  const bGrad = bCtx.createLinearGradient(0, 0, 0, size);
+  const ribs = 10;
+  for (let i = 0; i <= ribs; i++) {
+    const t0 = i / ribs;
+    const tMid = Math.min(1, t0 + 0.5 / ribs);
+    grad.addColorStop(t0, '#141820');
+    grad.addColorStop(tMid, '#2d3544');
+    bGrad.addColorStop(t0, '#202020');
+    bGrad.addColorStop(tMid, '#e8e8e8');
+  }
+  cCtx.fillStyle = grad;
+  cCtx.fillRect(0, 0, size, size);
+  bCtx.fillStyle = bGrad;
+  bCtx.fillRect(0, 0, size, size);
+
+  const map = new THREE.CanvasTexture(col);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.anisotropy = maxAnisotropy;
+
+  const bumpMap = new THREE.CanvasTexture(bump);
+  bumpMap.wrapS = bumpMap.wrapT = THREE.RepeatWrapping;
+  bumpMap.colorSpace = THREE.NoColorSpace;
+  bumpMap.anisotropy = maxAnisotropy;
+
+  return { map, bumpMap };
+}
+
 export interface Mark85MaterialLibrary {
   sharedUniforms: {
     uSuitProgress: { value: number };
@@ -334,6 +375,7 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
   const { albedoModMap, roughnessMap, normalMap } = createCadArmorSurfaceMaps(maxAnisotropy);
   const { map: grilleMap, bumpMap: grilleBump } = createPerforatedHexGrilleMaps(maxAnisotropy);
   const carbonMap = createCarbonHexMeshMap(maxAnisotropy);
+  const { map: bellowsMap, bumpMap: bellowsBump } = createBellowsRibMaps(maxAnisotropy);
   const defaultPreset = DEFAULT_SUIT_PRESETS[0];
 
   const sharedUniforms = {
@@ -347,8 +389,8 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
   };
 
   /**
-   * Shader PBR cinéma : coutures CAD biseautées + patine de combat dynamique (uWearAmount)
-   * + onde Nanotech lors du Suit-Up + mode Furtif.
+   * Shader PBR cinéma : coutures CAD biseautées + patine de combat dynamique (uWearAmount) + mode Furtif.
+   * Aucun effet hologramme nanotech — rendu métal usiné pur style Mark 42 / Mark 85 réel.
    */
   const applyArmorShader = <T extends THREE.Material>(
     material: T,
@@ -356,7 +398,7 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
     usePanelSeams = true
   ): T => {
     material.customProgramCacheKey = () =>
-      `mk85-cinema-cad-${allowStealth ? 's' : 'n'}-${usePanelSeams ? 'p' : 'f'}-v7`;
+      `mk42-mk85-mecha-cad-${allowStealth ? 's' : 'n'}-${usePanelSeams ? 'p' : 'f'}-v8`;
     material.onBeforeCompile = (shader) => {
       shader.uniforms.uSuitProgress = sharedUniforms.uSuitProgress;
       shader.uniforms.uTime = sharedUniforms.uTime;
@@ -399,7 +441,7 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
                ? `float seamU = smoothstep(0.0, 0.016, min(fract(vArmorUv.x * 2.0), 1.0 - fract(vArmorUv.x * 2.0)));
                   float seamV = smoothstep(0.0, 0.016, min(fract(vArmorUv.y * 3.0), 1.0 - fract(vArmorUv.y * 3.0)));
                   float edgeWear = (1.0 - seamU * seamV) * uWearAmount;
-                  diffuseColor.rgb *= (0.64 + 0.36 * (seamU * seamV));
+                  diffuseColor.rgb *= (0.62 + 0.38 * (seamU * seamV));
                   float chip = step(0.68, mk85Hash(floor(vArmorUv * 42.0))) * uWearAmount;
                   diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.76, 0.79, 0.84), clamp(edgeWear * 0.55 + chip * 0.32, 0.0, 0.72));`
                : ''
@@ -420,68 +462,21 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
                ? `roughnessFactor = mix(roughnessFactor, clamp(roughnessFactor + 0.28, 0.0, 0.92), uStealthMix);`
                : ''
            }`
-        )
-        .replace(
-          '#include <emissivemap_fragment>',
-          `#include <emissivemap_fragment>
-           if (uSuitProgress > 0.02 && uSuitProgress < 0.96) {
-             float gridPulse = smoothstep(0.91, 0.99, sin(vArmorUv.y * 46.0 - uTime * 11.0));
-             float fadeOut = 1.0 - smoothstep(0.55, 0.96, uSuitProgress);
-             totalEmissiveRadiance += uNanoColor * (gridPulse * 0.55 * fadeOut);
-           }`
         );
     };
     return material;
   };
 
+  // Sous-combinaison tactique balistique carbone-titane (zéro grille néon hologramme)
   const undersuitGrid = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0x141a24),
+    color: new THREE.Color(0x131720),
     map: carbonMap,
-    metalness: 0.38,
-    roughness: 0.54,
+    metalness: 0.44,
+    roughness: 0.56,
     bumpMap: carbonMap,
-    bumpScale: 0.004,
-    envMapIntensity: 0.85,
+    bumpScale: 0.006,
+    envMapIntensity: 0.78,
   });
-  undersuitGrid.customProgramCacheKey = () => 'mk85-blueprint-undersuit-v2';
-  undersuitGrid.onBeforeCompile = (shader) => {
-    shader.uniforms.uSuitProgress = sharedUniforms.uSuitProgress;
-    shader.uniforms.uTime = sharedUniforms.uTime;
-    shader.uniforms.uNanoColor = sharedUniforms.uNanoColor;
-
-    shader.vertexShader = shader.vertexShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-         varying vec2 vGridUv;`
-      )
-      .replace(
-        '#include <project_vertex>',
-        `#include <project_vertex>
-         vGridUv = uv;`
-      );
-
-    shader.fragmentShader = shader.fragmentShader
-      .replace(
-        '#include <common>',
-        `#include <common>
-         uniform float uSuitProgress;
-         uniform float uTime;
-         uniform vec3 uNanoColor;
-         varying vec2 vGridUv;`
-      )
-      .replace(
-        '#include <emissivemap_fragment>',
-        `#include <emissivemap_fragment>
-         float holoPhase = 1.0 - smoothstep(0.34, 0.74, uSuitProgress);
-         if (holoPhase > 0.01) {
-           vec2 g = abs(fract(vGridUv * vec2(20.0, 28.0) - 0.5) - 0.5) / 0.075;
-           float line = 1.0 - clamp(min(g.x, g.y), 0.0, 1.0);
-           float scan = 0.65 + 0.35 * sin(vGridUv.y * 30.0 - uTime * 9.0);
-           totalEmissiveRadiance += uNanoColor * (line * 1.25 + 0.12) * holoPhase * scan;
-         }`
-      );
-  };
 
   const crimson = applyArmorShader(
     new THREE.MeshPhysicalMaterial({
@@ -491,12 +486,12 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
       roughness: defaultPreset.roughness,
       roughnessMap,
       normalMap,
-      normalScale: new THREE.Vector2(0.85, 0.85),
-      anisotropy: 0.78,
+      normalScale: new THREE.Vector2(0.95, 0.95),
+      anisotropy: 0.72,
       clearcoat: defaultPreset.clearcoat,
       clearcoatRoughness: defaultPreset.clearcoatRoughness,
-      ior: 1.58,
-      envMapIntensity: 1.48,
+      ior: 1.56,
+      envMapIntensity: 1.24,
       side: THREE.DoubleSide,
     }),
     true,
@@ -537,15 +532,15 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
     new THREE.MeshPhysicalMaterial({
       color: new THREE.Color(defaultPreset.goldHex),
       map: albedoModMap,
-      metalness: 0.94,
-      roughness: Math.max(0.14, defaultPreset.roughness - 0.01),
+      metalness: 0.91,
+      roughness: Math.max(0.18, defaultPreset.roughness - 0.01),
       roughnessMap,
       normalMap,
-      normalScale: new THREE.Vector2(0.65, 0.65),
-      anisotropy: 0.90,
-      clearcoat: defaultPreset.clearcoat * 0.45,
-      clearcoatRoughness: 0.14,
-      envMapIntensity: 1.45,
+      normalScale: new THREE.Vector2(0.75, 0.75),
+      anisotropy: 0.86,
+      clearcoat: defaultPreset.clearcoat * 0.40,
+      clearcoatRoughness: 0.16,
+      envMapIntensity: 1.26,
       side: THREE.DoubleSide,
     }),
     true,
@@ -629,10 +624,14 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
   );
 
   const bellows = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(0x141820),
-    metalness: 0.34,
-    roughness: 0.60,
-    envMapIntensity: 0.78,
+    color: new THREE.Color(0x202630),
+    map: bellowsMap,
+    bumpMap: bellowsBump,
+    bumpScale: 0.014,
+    metalness: 0.42,
+    roughness: 0.56,
+    envMapIntensity: 0.85,
+    side: THREE.DoubleSide,
   });
 
   const carbon = new THREE.MeshStandardMaterial({
@@ -745,6 +744,8 @@ export function createMark85Materials(maxAnisotropy = 4): Mark85MaterialLibrary 
       grilleMap.dispose();
       grilleBump.dispose();
       carbonMap.dispose();
+      bellowsMap.dispose();
+      bellowsBump.dispose();
       crimson.dispose();
       crimsonDark.dispose();
       crimsonInner.dispose();

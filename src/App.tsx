@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronUp } from 'lucide-react';
+import { ChevronDown, ChevronUp, Layers, RotateCcw, Upload, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { JarvisARController, type HudSnapshot } from './ar/JarvisARController';
+import type { ArmorSocketId } from './ar/graphics/ArmorSockets';
 import { DEFAULT_SUIT_PRESETS } from './ar/types/SuitPreset';
 
 const INITIAL_HUD: HudSnapshot = {
   bootState: 'loading',
   bootProgress: 8,
-  bootTitle: 'STARK INDUSTRIES — MK-85',
-  bootMessage: 'Activation des capteurs optiques et post-traitement HDR...',
+  bootTitle: 'STARK INDUSTRIES — MK-42 / MK-85',
+  bootMessage: 'Activation des capteurs optiques 360° et rendu métallique ACES...',
   systemState: 'INITIALISATION OPTIQUE...',
   webcamStatus: 'ATTENTE',
   holisticInfo: 'CHARGEMENT',
@@ -17,6 +18,11 @@ const INITIAL_HUD: HudSnapshot = {
   arcEnergy: 100,
   calibReadout: '39CM // 1.65M',
   calibrated: false,
+  scanProgress: 0,
+  frontScanned: false,
+  backScanned: false,
+  isBackFacing: false,
+  suitStageLabel: 'ARRIMAGE INITIAL',
   luma: 0.55,
   helmetOpen: false,
   mechaInspect: false,
@@ -33,6 +39,9 @@ const INITIAL_HUD: HudSnapshot = {
   bloomEnabled: true,
   backendOnline: false,
   telemetrySummary: null,
+  socketStatuses: [],
+  videoDevices: [],
+  selectedVideoDeviceId: '',
   logs: [],
 };
 
@@ -46,6 +55,10 @@ export default function App() {
 
   const [hud, setHud] = useState<HudSnapshot>(INITIAL_HUD);
   const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [socketsOpen, setSocketsOpen] = useState(false);
+  const [loadingSocket, setLoadingSocket] = useState<ArmorSocketId | null>(null);
+  const [socketError, setSocketError] = useState<string | null>(null);
+  const [pickedDeviceId, setPickedDeviceId] = useState<string>('');
 
   useEffect(() => {
     const videoEl = videoRef.current;
@@ -55,6 +68,9 @@ export default function App() {
 
     const ctrl = new JarvisARController(videoEl, webglCanvas, debugCanvas, (snap) => {
       setHud(snap);
+      if (snap.selectedVideoDeviceId) {
+        setPickedDeviceId((prev) => prev || snap.selectedVideoDeviceId);
+      }
     });
     controllerRef.current = ctrl;
     void ctrl.start();
@@ -70,6 +86,20 @@ export default function App() {
   const syncOffset = RING_CIRCUMFERENCE * (1 - syncClamped / 100);
   const arcOffset = RING_CIRCUMFERENCE * (1 - arcClamped / 100);
   const activePreset = hud.presets.find((p) => p.id === hud.selectedPresetId) ?? hud.presets[0];
+  const customPartsCount = hud.socketStatuses.filter((s) => s.hasCustomPart).length;
+
+  const handleSocketFileChange = async (socketId: ArmorSocketId, file: File | undefined) => {
+    if (!file || !controllerRef.current) return;
+    setSocketError(null);
+    setLoadingSocket(socketId);
+    try {
+      await controllerRef.current.attachCustomPart(socketId, file);
+    } catch (err) {
+      setSocketError(err instanceof Error ? err.message : 'Erreur de chargement du modèle .glb/.gltf');
+    } finally {
+      setLoadingSocket(null);
+    }
+  };
 
   return (
     <div
@@ -129,13 +159,13 @@ export default function App() {
         className="hud-panel absolute top-3 left-3 z-[5] w-[238px] px-3 py-2.5 max-md:w-auto max-md:max-w-[46vw]"
       >
         <div className="font-display text-[12px] font-bold tracking-[0.09em] text-[var(--hud-cyan)] flex items-center justify-between gap-2">
-          <span>J.A.R.V.I.S. · MK-85</span>
+          <span>J.A.R.V.I.S. · MK-42/85</span>
           <span className="font-mono-tech text-[10px] text-[var(--hud-gold)]">
             {hud.isDemoMode ? 'DÉMO 3D' : 'AR LIVE'}
           </span>
         </div>
         <div className="font-mono-tech text-[10px] text-[var(--hud-gold)] mt-0.5 mb-2 tracking-[0.04em] truncate">
-          {hud.systemState}
+          {hud.suitStageLabel}
         </div>
 
         <div className="flex flex-col gap-0.5 font-mono-tech text-[10.5px]">
@@ -156,13 +186,18 @@ export default function App() {
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
             <span className="text-[#d2f6ff]/70">CORPS</span>
             <span className="text-[var(--hud-cyan)] font-semibold">
+              {hud.isBackFacing ? 'DOS · ' : 'FACE · '}
               {hud.calibrated ? hud.calibReadout : `CALIB ${hud.calibReadout}`}
             </span>
           </div>
           <div className="flex justify-between border-b border-[rgba(59,240,255,0.12)] pb-0.5">
-            <span className="text-[#d2f6ff]/70">RENDU HDR</span>
-            <span className="text-[var(--hud-cyan)] font-semibold">
-              {hud.bloomEnabled ? 'BLOOM ACES' : 'PBR STD'}
+            <span className="text-[#d2f6ff]/70">SCAN 360°</span>
+            <span className="text-[var(--hud-gold)] font-semibold">
+              {hud.frontScanned && hud.backScanned
+                ? 'AVANT + DOS OK'
+                : hud.frontScanned
+                  ? 'FACE OK · TOURNER DOS'
+                  : `${Math.round(hud.scanProgress * 100)}%`}
             </span>
           </div>
         </div>
@@ -252,8 +287,8 @@ export default function App() {
       {/* Bottom-Left Panel: Gesture State & Telemetry Log */}
       {!dockCollapsed && (
         <aside className="hud-panel absolute bottom-14 left-3 z-[5] w-[252px] px-3 py-2 max-xl:hidden">
-          <div className="font-display text-[10px] text-[var(--hud-cyan)] mb-1 tracking-[0.08em]">
-            TÉLÉMÉTRIE &amp; GESTES
+          <div className="font-display text-[10px] text-[var(--hud-cyan)] mb-1 tracking-[0.08em] truncate">
+            {hud.suitStageLabel}
           </div>
           <div className="flex items-center gap-1.5 text-[10px] font-mono-tech text-[#bfefff] mb-1 whitespace-nowrap overflow-hidden">
             <span className={hud.helmetOpen ? 'text-[var(--hud-gold)] font-semibold' : ''}>
@@ -306,6 +341,7 @@ export default function App() {
           <HudActionButton
             kbd="S"
             label="Suit-Up"
+            title="Suit-Up Mécatronique Mark 42 (touche S)"
             onClick={() => controllerRef.current?.triggerSuitUp()}
           />
           <HudActionButton
@@ -363,6 +399,13 @@ export default function App() {
               else controllerRef.current?.startDemoMode();
             }}
           />
+          <HudActionButton
+            kbd="GLB"
+            label={customPartsCount > 0 ? `Pièces (${customPartsCount})` : 'Pièces'}
+            active={socketsOpen || customPartsCount > 0}
+            title="Connecter des modèles 3D .glb / .gltf sur les 22 sockets anatomiques"
+            onClick={() => setSocketsOpen((v) => !v)}
+          />
           <div className="flex items-center border border-[var(--hud-border)] bg-[rgba(10,26,44,0.82)] shrink-0">
             <button
               type="button"
@@ -386,6 +429,99 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Collapsible Modular .GLB/.GLTF Socket Registry Drawer */}
+      <AnimatePresence>
+        {socketsOpen && (
+          <motion.aside
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: 20 }}
+            transition={{ duration: 0.2 }}
+            className="hud-panel fixed top-3 right-3 bottom-16 z-[15] w-[320px] max-w-[92vw] flex flex-col p-3"
+          >
+            <div className="flex items-center justify-between gap-2 pb-2 border-b border-[var(--hud-border)]">
+              <div className="flex items-center gap-1.5">
+                <Layers className="w-4 h-4 text-[var(--hud-cyan)]" />
+                <span className="font-display text-[12px] font-bold tracking-[0.08em] text-[var(--hud-cyan)]">
+                  SOCKETS ANATOMIQUES .GLB
+                </span>
+              </div>
+              <button
+                type="button"
+                aria-label="Fermer le panneau des sockets"
+                onClick={() => setSocketsOpen(false)}
+                className="p-1 text-[#cdefff] hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="font-mono-tech text-[10px] text-[#cbeeff]/80 mt-2 mb-2 leading-snug">
+              Importez vos pièces <span className="text-[var(--hud-gold)]">.glb / .gltf</span> par membre ou déclarez-les dans{' '}
+              <span className="text-[var(--hud-cyan)]">/assets/suit-parts/manifest.json</span>.
+            </p>
+
+            {socketError && (
+              <div className="mb-2 px-2 py-1 border border-[var(--hud-red)] bg-[rgba(255,59,78,0.15)] font-mono-tech text-[10px] text-white">
+                {socketError}
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto pr-1 flex flex-col gap-1.5">
+              {hud.socketStatuses.map((sock) => {
+                const isLoading = loadingSocket === sock.id;
+                return (
+                  <div
+                    key={sock.id}
+                    className="px-2 py-1.5 border border-[var(--hud-border)] bg-[rgba(8,22,38,0.88)] flex items-center justify-between gap-2"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-mono-tech text-[10.5px] font-semibold text-[#e6fbff] truncate">
+                        {sock.label}
+                      </div>
+                      <div className="font-mono-tech text-[9.5px] text-[var(--hud-cyan)]/75 truncate">
+                        {isLoading
+                          ? 'Chargement 3D...'
+                          : sock.hasCustomPart
+                            ? sock.customSourceName ?? 'Modèle personnalisé actif'
+                            : sock.id}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <label className="px-2 py-1 border border-[var(--hud-border)] bg-[rgba(59,240,255,0.12)] hover:border-[var(--hud-cyan)] text-[10px] font-mono-tech text-[#dff9ff] hover:text-white flex items-center gap-1 cursor-pointer">
+                        <Upload className="w-3 h-3 text-[var(--hud-cyan)]" />
+                        <span>.GLB</span>
+                        <input
+                          type="file"
+                          accept=".glb,.gltf"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = '';
+                            void handleSocketFileChange(sock.id, file);
+                          }}
+                        />
+                      </label>
+                      {sock.hasCustomPart && (
+                        <button
+                          type="button"
+                          title="Restaurer le maillage natif"
+                          onClick={() => controllerRef.current?.detachCustomPart(sock.id)}
+                          className="p-1 border border-[var(--hud-border)] bg-[rgba(255,59,78,0.16)] hover:border-[var(--hud-red)] text-white cursor-pointer"
+                        >
+                          <RotateCcw className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </motion.aside>
+        )}
+      </AnimatePresence>
 
       {/* Boot / Webcam Error Overlay */}
       <AnimatePresence>
@@ -419,21 +555,39 @@ export default function App() {
               </div>
 
               {hud.bootState === 'error' && (
-                <div className="flex flex-wrap items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => void controllerRef.current?.start()}
-                    className="px-4 py-2.5 bg-[rgba(255,59,78,0.22)] border border-[var(--hud-red)] text-white font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(255,59,78,0.34)] transition-colors whitespace-nowrap"
-                  >
-                    Réactiver la webcam
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => controllerRef.current?.startDemoMode()}
-                    className="px-4 py-2.5 bg-[rgba(59,240,255,0.18)] border border-[var(--hud-cyan)] text-[#dff9ff] font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(59,240,255,0.30)] transition-colors whitespace-nowrap"
-                  >
-                    Lancer Démo 3D (Sans Webcam)
-                  </button>
+                <div className="flex flex-col items-center gap-3">
+                  {hud.videoDevices.length > 0 && (
+                    <select
+                      aria-label="Sélectionner une caméra"
+                      value={pickedDeviceId || hud.selectedVideoDeviceId}
+                      onChange={(e) => setPickedDeviceId(e.target.value)}
+                      className="w-full max-w-[340px] px-3 py-2 bg-[rgba(8,22,38,0.94)] border border-[var(--hud-border)] text-[#dff9ff] font-mono-tech text-[11px] focus:outline-none focus:border-[var(--hud-cyan)]"
+                    >
+                      <option value="">Caméra par défaut (Auto)</option>
+                      {hud.videoDevices.map((cam) => (
+                        <option key={cam.deviceId} value={cam.deviceId}>
+                          {cam.label}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  <div className="flex flex-wrap items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void controllerRef.current?.start(pickedDeviceId || undefined)}
+                      className="px-4 py-2.5 bg-[rgba(255,59,78,0.22)] border border-[var(--hud-red)] text-white font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(255,59,78,0.34)] transition-colors whitespace-nowrap"
+                    >
+                      Réactiver la webcam
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => controllerRef.current?.startDemoMode()}
+                      className="px-4 py-2.5 bg-[rgba(59,240,255,0.18)] border border-[var(--hud-cyan)] text-[#dff9ff] font-display text-[12px] tracking-wider cursor-pointer hover:bg-[rgba(59,240,255,0.30)] transition-colors whitespace-nowrap"
+                    >
+                      Lancer Démo 3D (Sans Webcam)
+                    </button>
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -447,14 +601,16 @@ export default function App() {
 interface HudActionButtonProps {
   kbd: string;
   label: string;
+  title?: string;
   active?: boolean;
   onClick: () => void;
 }
 
-function HudActionButton({ kbd, label, active = false, onClick }: HudActionButtonProps) {
+function HudActionButton({ kbd, label, title, active = false, onClick }: HudActionButtonProps) {
   return (
     <button
       type="button"
+      title={title}
       onClick={onClick}
       className={`px-2 py-1 border font-mono-tech text-[10.5px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
         active

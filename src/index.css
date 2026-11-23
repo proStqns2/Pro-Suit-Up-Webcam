@@ -130,3 +130,32 @@ body,
     animation: none;
   }
 }
+
+.hud-scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  background: rgba(59, 240, 255, 0.22);
+  border: 1px solid rgba(59, 240, 255, 0.38);
+  outline: none;
+  cursor: pointer;
+}
+
+.hud-scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 14px;
+  background: var(--hud-gold);
+  border: 1px solid #ffffff;
+  cursor: ew-resize;
+}
+
+.hud-scrubber::-moz-range-thumb {
+  width: 12px;
+  height: 14px;
+  background: var(--hud-gold);
+  border: 1px solid #ffffff;
+  border-radius: 0;
+  cursor: ew-resize;
+}

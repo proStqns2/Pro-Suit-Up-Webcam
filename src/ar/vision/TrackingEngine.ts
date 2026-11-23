@@ -15,7 +15,7 @@ const HOLISTIC_MODEL_URL =
   'https://storage.googleapis.com/mediapipe-models/holistic_landmarker/holistic_landmarker/float16/1/holistic_landmarker.task';
 
 const TFLITE_BENIGN_STDERR_RE =
-  /^(?:INFO:\s*(?:Created TensorFlow Lite|Initialized TensorFlow Lite)|WARNING:\s*All log messages before absl::InitializeLog\(\))/;
+  /(?:Created TensorFlow Lite|Initialized TensorFlow Lite|All log messages before absl::InitializeLog)/i;
 
 let tfliteLogFilterInstalled = false;
 
@@ -24,7 +24,7 @@ function installTfliteStderrFilter(): void {
   tfliteLogFilterInstalled = true;
   const origError = console.error.bind(console);
   console.error = (...args: unknown[]) => {
-    if (typeof args[0] === 'string' && TFLITE_BENIGN_STDERR_RE.test(args[0].trimStart())) {
+    if (typeof args[0] === 'string' && TFLITE_BENIGN_STDERR_RE.test(args[0])) {
       console.debug(...args);
       return;
     }
@@ -40,6 +40,8 @@ export class TrackingEngine {
   private poseFallback: PoseLandmarker | null = null;
   private handFallback: HandLandmarker | null = null;
   private faceFallback: FaceLandmarker | null = null;
+  private initializedDelegate: 'GPU' | 'CPU' | 'GPU-MOD' | 'CPU-MOD' | null = null;
+  private initPromise: Promise<void> | null = null;
 
   private lastVideoTime = -1;
   private lastTimestampMs = 0;
@@ -68,8 +70,58 @@ export class TrackingEngine {
   private demoRightHand: NormalizedLandmark[] = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }));
   private demoFace: NormalizedLandmark[] = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.25, z: 0, visibility: 1 }));
 
+  resetVideoState(): void {
+    this.lastVideoTime = -1;
+    this.maskUpdated = false;
+    this.latestResult.poseLandmarks = null;
+    this.latestResult.poseWorldLandmarks = null;
+    this.latestResult.faceLandmarks = null;
+    this.latestResult.faceBlendshapes = null;
+    this.latestResult.leftHandLandmarks = null;
+    this.latestResult.leftHandWorldLandmarks = null;
+    this.latestResult.rightHandLandmarks = null;
+    this.latestResult.rightHandWorldLandmarks = null;
+  }
+
   async init(onProgress?: (pct: number, msg: string) => void): Promise<void> {
     installTfliteStderrFilter();
+    this.resetVideoState();
+
+    // Réutilisation immédiate si le pipeline MediaPipe est déjà initialisé (retour depuis Démo 3D / réactivation)
+    if (this.holistic) {
+      this.mode = 'holistic';
+      this.delegate = this.initializedDelegate === 'CPU' ? 'CPU' : 'GPU';
+      onProgress?.(95, 'Pipeline MediaPipe Holistic prêt.');
+      return;
+    }
+    if (this.poseFallback && this.handFallback && this.faceFallback) {
+      this.mode = 'modular';
+      this.delegate = this.initializedDelegate === 'CPU-MOD' ? 'CPU-MOD' : 'GPU-MOD';
+      onProgress?.(95, 'Pipeline MediaPipe modulaire prêt.');
+      return;
+    }
+
+    if (this.initPromise) {
+      await this.initPromise;
+      if (this.holistic) {
+        this.mode = 'holistic';
+        this.delegate = this.initializedDelegate === 'CPU' ? 'CPU' : 'GPU';
+      } else if (this.poseFallback && this.handFallback && this.faceFallback) {
+        this.mode = 'modular';
+        this.delegate = this.initializedDelegate === 'CPU-MOD' ? 'CPU-MOD' : 'GPU-MOD';
+      }
+      return;
+    }
+
+    this.initPromise = this._initInternal(onProgress);
+    try {
+      await this.initPromise;
+    } finally {
+      this.initPromise = null;
+    }
+  }
+
+  private async _initInternal(onProgress?: (pct: number, msg: string) => void): Promise<void> {
     onProgress?.(25, 'Chargement du runtime WebAssembly MediaPipe...');
     let vision;
     try {
@@ -83,6 +135,7 @@ export class TrackingEngine {
       this.holistic = await this._createHolistic(vision, 'GPU');
       this.mode = 'holistic';
       this.delegate = 'GPU';
+      this.initializedDelegate = 'GPU';
       return;
     } catch (errGpu) {
       console.warn('Holistic GPU delegate fallback -> CPU:', errGpu);
@@ -91,6 +144,7 @@ export class TrackingEngine {
         this.holistic = await this._createHolistic(vision, 'CPU');
         this.mode = 'holistic';
         this.delegate = 'CPU';
+        this.initializedDelegate = 'CPU';
         return;
       } catch (errCpu) {
         console.warn('HolisticLandmarker indisponible, activation pipeline modulaire:', errCpu);
@@ -98,43 +152,51 @@ export class TrackingEngine {
     }
 
     onProgress?.(70, 'Chargement fallback Pose + Hands + FaceLandmarker...');
-    const [pose, hand, face] = await Promise.all([
-      PoseLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numPoses: 1,
-        outputSegmentationMasks: true,
-      }),
-      HandLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numHands: 2,
-      }),
-      FaceLandmarker.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath:
-            'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
-          delegate: 'GPU',
-        },
-        runningMode: 'VIDEO',
-        numFaces: 1,
-        outputFaceBlendshapes: true,
-      }),
-    ]);
+    for (const del of ['GPU', 'CPU'] as const) {
+      try {
+        const [pose, hand, face] = await Promise.all([
+          PoseLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+              delegate: del,
+            },
+            runningMode: 'VIDEO',
+            numPoses: 1,
+            outputSegmentationMasks: true,
+          }),
+          HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task',
+              delegate: del,
+            },
+            runningMode: 'VIDEO',
+            numHands: 2,
+          }),
+          FaceLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath:
+                'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+              delegate: del,
+            },
+            runningMode: 'VIDEO',
+            numFaces: 1,
+            outputFaceBlendshapes: true,
+          }),
+        ]);
 
-    this.poseFallback = pose;
-    this.handFallback = hand;
-    this.faceFallback = face;
-    this.mode = 'modular';
-    this.delegate = 'GPU-MOD';
+        this.poseFallback = pose;
+        this.handFallback = hand;
+        this.faceFallback = face;
+        this.mode = 'modular';
+        this.delegate = del === 'GPU' ? 'GPU-MOD' : 'CPU-MOD';
+        this.initializedDelegate = del === 'GPU' ? 'GPU-MOD' : 'CPU-MOD';
+        return;
+      } catch (modErr) {
+        if (del === 'CPU') throw modErr;
+      }
+    }
   }
 
   private async _createHolistic(
@@ -167,7 +229,14 @@ export class TrackingEngine {
       return this._generateDemoFrame(timeSec);
     }
 
-    if (!videoEl || videoEl.readyState < 2) return this.latestResult;
+    if (
+      !videoEl ||
+      videoEl.readyState < 2 ||
+      videoEl.videoWidth === 0 ||
+      videoEl.videoHeight === 0
+    ) {
+      return this.latestResult;
+    }
     if (videoEl.currentTime === this.lastVideoTime) return this.latestResult;
     this.lastVideoTime = videoEl.currentTime;
 

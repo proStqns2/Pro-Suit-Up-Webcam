@@ -27,11 +27,19 @@ const DIST_DIR = path.resolve(ROOT_DIR, 'dist');
 const WASM_DIR = path.resolve(ROOT_DIR, 'public', 'mediapipe-wasm');
 
 const VALID_PRESET_IDS = new Set<SuitPresetId>([
+  'MK42_PRODIGAL_SON',
   'MK85_ENDGAME',
-  'MK85_LAB_PROTO',
   'MK85_STEALTH_OPS',
   'MK85_BATTLE_DAMAGED',
 ]);
+
+function normalizePresetId(candidate: unknown, fallback: SuitPresetId): SuitPresetId {
+  if (candidate === 'MK85_LAB_PROTO') return 'MK42_PRODIGAL_SON';
+  if (typeof candidate === 'string' && VALID_PRESET_IDS.has(candidate as SuitPresetId)) {
+    return candidate as SuitPresetId;
+  }
+  return fallback;
+}
 
 function clampNumber(val: unknown, min: number, max: number, fallback: number): number {
   if (typeof val !== 'number' || !Number.isFinite(val)) return fallback;
@@ -76,10 +84,7 @@ async function loadState(): Promise<PersistedJarvisState> {
     const cal = parsed.calibration;
     const tel = parsed.telemetry;
 
-    const presetId: SuitPresetId =
-      cal && typeof cal.selectedPresetId === 'string' && VALID_PRESET_IDS.has(cal.selectedPresetId as SuitPresetId)
-        ? (cal.selectedPresetId as SuitPresetId)
-        : initial.calibration.selectedPresetId;
+    const presetId = normalizePresetId(cal?.selectedPresetId, initial.calibration.selectedPresetId);
 
     stateCache = {
       calibration: {
@@ -88,6 +93,10 @@ async function loadState(): Promise<PersistedJarvisState> {
         bloomStrength: clampNumber(cal?.bloomStrength, 0, 1.4, initial.calibration.bloomStrength),
         metricShoulderWidth: clampNumber(cal?.metricShoulderWidth, 0.24, 0.65, initial.calibration.metricShoulderWidth),
         torsoAspectRatio: clampNumber(cal?.torsoAspectRatio, 0.9, 2.2, initial.calibration.torsoAspectRatio),
+        waistWidthFactor: clampNumber(cal?.waistWidthFactor, 0.78, 1.32, initial.calibration.waistWidthFactor),
+        armGirthFactor: clampNumber(cal?.armGirthFactor, 0.82, 1.30, initial.calibration.armGirthFactor),
+        frontScanned: typeof cal?.frontScanned === 'boolean' ? cal.frontScanned : initial.calibration.frontScanned,
+        backScanned: typeof cal?.backScanned === 'boolean' ? cal.backScanned : initial.calibration.backScanned,
         updatedAt: typeof cal?.updatedAt === 'string' ? cal.updatedAt : initial.calibration.updatedAt,
       },
       telemetry: {
@@ -157,10 +166,7 @@ function registerApiRoutes(app: Express): void {
     }
 
     const current = await loadState();
-    const nextPresetId =
-      typeof body.selectedPresetId === 'string' && VALID_PRESET_IDS.has(body.selectedPresetId as SuitPresetId)
-        ? (body.selectedPresetId as SuitPresetId)
-        : current.calibration.selectedPresetId;
+    const nextPresetId = normalizePresetId(body.selectedPresetId, current.calibration.selectedPresetId);
 
     const updatedCal: CalibrationProfile = {
       fitScale: clampNumber(body.fitScale, 0.8, 1.35, current.calibration.fitScale),
@@ -173,6 +179,10 @@ function registerApiRoutes(app: Express): void {
         current.calibration.metricShoulderWidth
       ),
       torsoAspectRatio: clampNumber(body.torsoAspectRatio, 0.9, 2.2, current.calibration.torsoAspectRatio),
+      waistWidthFactor: clampNumber(body.waistWidthFactor, 0.78, 1.32, current.calibration.waistWidthFactor),
+      armGirthFactor: clampNumber(body.armGirthFactor, 0.82, 1.30, current.calibration.armGirthFactor),
+      frontScanned: typeof body.frontScanned === 'boolean' ? body.frontScanned : current.calibration.frontScanned,
+      backScanned: typeof body.backScanned === 'boolean' ? body.backScanned : current.calibration.backScanned,
       updatedAt: new Date().toISOString(),
     };
 
